@@ -91,6 +91,7 @@ class AbsorbingDiffusion(Sampler):
         return x_t, x_0_ignore, mask
 
     def _train_loss(self, x_0):
+        x_0 = x_0.long()
         b, device = x_0.size(0), x_0.device
 
         # choose what time steps to compute loss at

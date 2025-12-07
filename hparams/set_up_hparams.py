@@ -10,7 +10,7 @@ def add_common_args(parser):
     parser.add_argument("--load_dir", type=str, default=None)
     parser.add_argument("--load_step", type=int, default=0)
     parser.add_argument("--bars", type=int, default=64)
-    parser.add_argument("--dataset_path", type=str, default='data/lakh_melody_64_1MIO.npy')
+    parser.add_argument("--dataset_path", type=str, default='data/POP909_melody.npy')
     parser.add_argument("--port", type=int, default=8097)
 
 

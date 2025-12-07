@@ -1,0 +1,56 @@
+name: symbolic-music-discrete-diffusion
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pytorch
+  - torchvision
+  - torchaudio
+  - pytorch-cuda=11.8
+  - pip
+  - numpy=1.23.1
+  - pandas
+  - scipy
+  - scikit-learn
+  - matplotlib
+  - jupyterlab
+  - notebook
+  - ipywidgets
+  - statsmodels
+  - ffmpeg
+  - pip:
+    - absl-py
+    - addict
+    - aiofiles
+    - anyio
+    - audioread
+    - bleach
+    - click
+    - fastapi
+    - filelock
+    - huggingface-hub
+    - joblib
+    - librosa
+    - mido
+    - nicegui
+    - note-seq
+    - numba
+    - pillow # 9.2.0
+    - pretty-midi
+    - pydub
+    - pyfluidsynth
+    - pypianoroll
+    - python-dotenv
+    - python-socketio
+    - pyyaml
+    - rich
+    - soundfile
+    - tensorboard-plugin-wit
+    - transformers==4.24.0
+    - uvicorn
+    - visdom
+    - watchfiles
+    - websockets

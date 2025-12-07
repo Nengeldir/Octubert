@@ -14,7 +14,9 @@ from utils.train_utils import EMA, optim_warmup, augment_note_tensor
 
 
 def main(H, vis):
+    print("HELOOOO")
     midi_data = np.load(H.dataset_path, allow_pickle=True)
+    print(midi_data.shape)
     midi_data = SubseqSampler(midi_data, H.NOTES)
 
     val_idx = int(len(midi_data) * H.validation_set_size)
@@ -27,6 +29,7 @@ def main(H, vis):
     sampler = get_sampler(H).cuda()
     optim = torch.optim.Adam(sampler.parameters(), lr=H.lr)
 
+    print("HELOOOO")
     if H.ema:
         ema = EMA(H.ema_beta)
         ema_sampler = copy.deepcopy(sampler)
@@ -44,6 +47,7 @@ def main(H, vis):
         start_step = H.load_step + 1
 
         sampler = load_model(sampler, H.sampler, H.load_step, H.load_dir).cuda()
+        print("loaded model")
         if H.ema:
             # if EMA has not been generated previously, recopy newly loaded model
             try:

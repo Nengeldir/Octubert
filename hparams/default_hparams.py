@@ -30,11 +30,11 @@ class HparamsAbsorbing(HparamsBase):
         self.embd_pdrop = 0.2
         self.resid_pdrop = 0.2
         self.temp = 1.0
-        self.steps_per_eval = 10000
-        self.steps_per_checkpoint = 10000
-        self.steps_per_log = 100
+        self.steps_per_eval = 20
+        self.steps_per_checkpoint = 50
+        self.steps_per_log = 10
         self.steps_per_update_ema = 10
-        self.steps_per_sample = 5000
+        self.steps_per_sample = 50
         self.load_step = 0
         self.sampling_batch_size = 24
         self.bert_n_emb = 512

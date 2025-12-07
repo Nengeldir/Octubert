@@ -28,16 +28,17 @@ from note_seq import sequences_lib
 from preprocessing import drum_pipelines
 from preprocessing import melody_pipelines
 
-PIANO_MIN_MIDI_PITCH = 21
-PIANO_MAX_MIDI_PITCH = 108
-MIN_MIDI_PITCH = 0
-MAX_MIDI_PITCH = 127
-MIDI_PITCHES = 128
+PIANO_MIN_MIDI_PITCH = 21 # 21 is the lowest MIDI pitch for Pianos
+PIANO_MAX_MIDI_PITCH = 108 # 108 is the highest MIDI pitch for Pianos
+MIN_MIDI_PITCH = 0 # 0 is the lowest MIDI pitch
+MAX_MIDI_PITCH = 127 # 127 is the highest MIDI pitch
+MIDI_PITCHES = 128 # 128 is the number of MIDI pitches
 
 MAX_INSTRUMENT_NUMBER = 127
 
-MEL_PROGRAMS = range(0, 32)  # piano, chromatic percussion, organ, guitar
-BASS_PROGRAMS = range(32, 40)
+# 0-32: Melody Programs, 32-40: Bass Programs
+MEL_PROGRAMS = range(0, 32)  # piano, chromatic percussion, organ, guitar (Melody Programs)
+BASS_PROGRAMS = range(32, 40) # bass (Bass Programs)
 ELECTRIC_BASS_PROGRAM = 33
 
 # 9 classes: kick, snare, closed_hh, open_hh, low_tom, mid_tom, hi_tom, crash,
@@ -72,7 +73,7 @@ ROLAND_DRUM_PITCH_CLASSES = [
     [51, 53, 59]
 ]
 
-OUTPUT_VELOCITY = 80
+OUTPUT_VELOCITY = 80 # fixed for every note?
 
 CHORD_SYMBOL = note_seq.NoteSequence.TextAnnotation.CHORD_SYMBOL
 
@@ -99,7 +100,9 @@ def _extract_instrument(note_sequence, instrument):
 
 
 def maybe_sample_items(seq, sample_size, randomize):
-  """Samples a seq if `sample_size` is provided and less than seq size."""
+  """Samples a seq if `sample_size` is provided and less than seq size.
+  
+  """
   if not sample_size or len(seq) <= sample_size:
     return seq
   if randomize:
