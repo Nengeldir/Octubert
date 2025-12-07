@@ -23,6 +23,8 @@ def add_sample_args(parser):
 def add_train_args(parser):
     add_eval_args(parser, 1)
 
+    parser.add_argument("--epochs", type=int, default=None)
+
     parser.add_argument("--ema_beta", type=float, default=0.995)
     parser.add_argument("--load_optim", const=True, action="store_const", default=False)
     parser.add_argument("--lr", type=float)
