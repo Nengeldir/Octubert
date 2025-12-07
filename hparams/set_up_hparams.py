@@ -26,13 +26,13 @@ def add_train_args(parser):
     parser.add_argument("--ema_beta", type=float, default=0.995)
     parser.add_argument("--load_optim", const=True, action="store_const", default=False)
     parser.add_argument("--lr", type=float)
-    parser.add_argument("--batch_size", type=int, default=16)
+    parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--steps_per_update_ema", type=int, default=10)
     parser.add_argument("--steps_per_log", type=int, default=10)
-    parser.add_argument("--steps_per_eval", type=int, default=10000)
-    parser.add_argument("--steps_per_sample", type=int, default=5000)
-    parser.add_argument("--steps_per_checkpoint", type=int, default=10000)
-    parser.add_argument("--train_steps", type=int, default=100000000)
+    parser.add_argument("--steps_per_eval", type=int, default=20)
+    parser.add_argument("--steps_per_sample", type=int, default=20)
+    parser.add_argument("--steps_per_checkpoint", type=int, default=20)
+    parser.add_argument("--train_steps", type=int, default=500)
     parser.add_argument("--show_samples", type=int, default=32)
 
 
