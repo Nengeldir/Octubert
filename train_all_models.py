@@ -7,7 +7,7 @@ models = ["conv_transformer", "transformer", "hierarch_transformer", "U_transfor
 # Common arguments
 dataset = "data/POP909_melody.npy"
 bars = "64"
-batch_size = "16"
+batch_size = "4"
 tracks = "melody"
 
 def train_model(model_name):

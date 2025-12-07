@@ -89,7 +89,14 @@ def sample_audio(samples):
     samples[samples == 90] = 0#todo: could remove drum pattern
     samples[samples == 512] = 0
     samples = samples_2_noteseq(samples)
-    return [fluidsynth(s, 44100., 'soundfont.sf2') for s in samples]
+    try:
+        return [fluidsynth(s, 44100., 'soundfont.sf2') for s in samples]
+    except ImportError:
+        log("Skipping audio generation: pyfluidsynth not installed.")
+        return []
+    except Exception as e:
+        log(f"Skipping audio generation: {e}")
+        return []
 
 
 def vis_samples(vis, samples, step):

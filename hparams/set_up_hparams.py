@@ -32,7 +32,7 @@ def add_train_args(parser):
     parser.add_argument("--steps_per_eval", type=int, default=20)
     parser.add_argument("--steps_per_sample", type=int, default=100)
     parser.add_argument("--steps_per_checkpoint", type=int, default=20)
-    parser.add_argument("--train_steps", type=int, default=500)
+    parser.add_argument("--train_steps", type=int, default=1000)
     parser.add_argument("--show_samples", type=int, default=32)
 
 
