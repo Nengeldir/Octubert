@@ -1,11 +1,12 @@
 import subprocess
 import sys
-
 import os
 import re
+import platform
+import shutil
 
 # Models to train
-models = ["conv_transformer", "transformer", "hierarch_transformer", "U_transformer"]
+models = ["hierarch_transformer"]
 
 # Common arguments
 dataset = "data/POP909_melody.npy"
@@ -16,9 +17,33 @@ tracks = "melody"
 epochs = "100"
 train_steps = "100000"
 steps_per_log = "10"
-steps_per_eval = "1000"
-steps_per_sample = "1000"
+steps_per_eval = "2000"
+steps_per_sample = "2000"
 steps_per_checkpoint = "500"
+
+SCRATCH_DIR_BASE = "/work/scratch/lconconi"
+
+def is_cluster():
+    """
+    Detects if running on the cluster. 
+    Heuristic: Checks if the OS is Ubuntu.
+    """
+    try:
+        # Check /etc/os-release which is standard on modern Linux
+        if os.path.exists("/etc/os-release"):
+            with open("/etc/os-release") as f:
+                content = f.read()
+                if "Ubuntu" in content or "ID=ubuntu" in content:
+                    return True
+        
+        # Fallback check
+        if "Ubuntu" in platform.version():
+            return True
+            
+    except Exception:
+        pass
+        
+    return False
 
 def get_latest_checkpoint(model_name):
     # Calculate NOTES as per default_hparams.py logic
@@ -28,6 +53,8 @@ def get_latest_checkpoint(model_name):
     
     # Construct log directory name
     log_dir_name = f"log_{model_name}_{tracks}_{notes}"
+    # We always look for checkpoints in the permanent storage "logs/" 
+    # because scratch is purged.
     log_dir_path = os.path.join("logs", log_dir_name, "saved_models")
     
     if not os.path.exists(log_dir_path):
@@ -35,9 +62,6 @@ def get_latest_checkpoint(model_name):
         
     max_step = 0
     # Pattern to match checkpoint files, e.g., absorbing_500.th
-    # Note: The model_save_name in save_model (log_utils.py) seems to depend on hparams.sampler
-    # In default_hparams.py, sampler is "absorbing" for all these models.
-    # So files will look like absorbing_{step}.th
     pattern = re.compile(r"absorbing_(\d+)\.th")
     
     for filename in os.listdir(log_dir_path):
@@ -54,7 +78,26 @@ def train_model(model_name):
     print(f"Starting training for model: {model_name}")
     print(f"==============================================")
     
-    load_step, load_dir = get_latest_checkpoint(model_name)
+    load_step, log_dir_name = get_latest_checkpoint(model_name)
+    
+    on_cluster = is_cluster()
+    log_base_dir = None
+    
+    if on_cluster:
+        log_base_dir = SCRATCH_DIR_BASE
+        print(f"[CLUSTER DETECTED] Running on Ubuntu cluster.")
+        print(f"[CLUSTER DETECTED] Output will be redirected to scratch: {log_base_dir}")
+        
+        # Ensure scratch directory exists
+        if not os.path.exists(log_base_dir):
+            try:
+                os.makedirs(log_base_dir, exist_ok=True)
+                print(f"[CLUSTER DETECTED] Created scratch directory: {log_base_dir}")
+            except Exception as e:
+                print(f"[CLUSTER ERROR] Failed to create scratch directory: {e}")
+                # Fallback to local logs if scratch fails? 
+                # User asked to use scratch to avoid OOM, so maybe failing is better, 
+                # but let's try to proceed or just let train.py fail if it can't write.
     
     cmd = [
         sys.executable, "train.py",
@@ -72,14 +115,22 @@ def train_model(model_name):
         "--amp",
     ]
     
+    if log_base_dir:
+        cmd.extend(["--log_base_dir", log_base_dir])
+
     if load_step > 0:
-        print(f"Resuming from checkpoint: step {load_step} in {load_dir}")
+
+        print(f"Resuming from checkpoint: step {load_step} in {log_dir_name}")
         cmd.extend(["--load_step", str(load_step)])
-        cmd.extend(["--load_dir", load_dir])
+        cmd.extend(["--load_dir", log_dir_name])
     
     try:
         subprocess.run(cmd, check=True)
         print(f"Finished training for model: {model_name}")
+        
+        if on_cluster:
+            print(f"[CLUSTER DETECTED] Syncing to permanent storage is handled automatically by log_utils.")
+
     except subprocess.CalledProcessError as e:
         print(f"Failed to train model: {model_name}")
         print(f"Error: {e}")

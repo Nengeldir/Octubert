@@ -1,6 +1,6 @@
 import copy
 import time
-
+import os
 import numpy as np
 import torch
 from torch.utils.data import Sampler
@@ -19,7 +19,7 @@ def main(H, vis):
 
     val_idx = int(len(midi_data) * H.validation_set_size)
     train_loader = torch.utils.data.DataLoader(midi_data[val_idx:], batch_size=H.batch_size, shuffle=True,
-                                               pin_memory=True, num_workers=4)
+                                               pin_memory=True, num_workers=2)
     val_loader = torch.utils.data.DataLoader(midi_data[:val_idx], batch_size=H.batch_size)
 
     log(f'Total train batches: {len(train_loader)}, eval: {len(val_loader)}')

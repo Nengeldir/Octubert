@@ -23,6 +23,7 @@ class AbsorbingDiffusion(Sampler):
         self.sample_schedule = H.sample_schedule
         self.register_buffer('mask_id', torch.tensor(mask_id))
 
+        # Track loss at each time step for importance sampling
         self.register_buffer('Lt_history', torch.zeros(self.num_timesteps+1))
         self.register_buffer('Lt_count', torch.zeros(self.num_timesteps+1))
         self.register_buffer('loss_history', torch.zeros(self.num_timesteps+1))
@@ -47,6 +48,7 @@ class AbsorbingDiffusion(Sampler):
 
         elif method == 'uniform':
             t = torch.randint(1, self.num_timesteps+1, (b,), device=device).long()
+            # get its probability
             pt = torch.ones_like(t).float() / self.num_timesteps
             return t, pt
 

@@ -1,3 +1,5 @@
+import os
+
 class HparamsBase(dict):
     def __getattr__(self, attr):
         try:
@@ -52,8 +54,12 @@ class HparamsAbsorbing(HparamsBase):
         self.sample_steps = self.NOTES
         self.block_size = self.NOTES
         self.tracks = self.tracks
-        self.log_dir = f'log_{self.model}_{self.tracks}_{self.NOTES}'
-        self.load_dir = self.log_dir
+        if self.log_base_dir:
+            self.log_dir = os.path.join(self.log_base_dir, f'log_{self.model}_{self.tracks}_{self.NOTES}')
+        else:
+            self.log_dir = f'log_{self.model}_{self.tracks}_{self.NOTES}'
+        if not self.load_dir:
+            self.load_dir = self.log_dir
         self.codebook_size = (90, ) if self.tracks == 'melody' else (90, 90, 512)
         self.latent_shape = (self.NOTES, len(self.codebook_size))
         self.load_optim = self.load_step != 0
