@@ -1,5 +1,5 @@
 import argparse
-from .default_hparams import HparamsAbsorbing, HparamsAbsorbingConv, HparamsHierarchTransformer, HparamsUTransformer
+from .default_hparams import HparamsAbsorbing, HparamsAbsorbingConv, HparamsHierarchTransformer, HparamsUTransformer, HparamsOctuple
 
 
 def add_common_args(parser):
@@ -69,6 +69,8 @@ def get_sampler_hparams(mode):
         H = HparamsHierarchTransformer(parser_args)
     elif parser_args.model == 'U_transformer':
         H = HparamsUTransformer(parser_args)
+    elif parser_args.model == 'octuple':
+        H = HparamsOctuple(parser_args)
     else:
         parser_args.model = 'conv_transformer'
         H = HparamsAbsorbingConv(parser_args)
