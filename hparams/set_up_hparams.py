@@ -37,6 +37,7 @@ def add_train_args(parser):
     parser.add_argument("--steps_per_checkpoint", type=int, default=20)
     parser.add_argument("--train_steps", type=int, default=1000)
     parser.add_argument("--show_samples", type=int, default=32)
+    parser.add_argument("--masking_strategy", type=str, default=None)
 
 
 def add_eval_args(parser, num_evals=5):
@@ -69,7 +70,7 @@ def get_sampler_hparams(mode):
         H = HparamsHierarchTransformer(parser_args)
     elif parser_args.model == 'U_transformer':
         H = HparamsUTransformer(parser_args)
-    elif parser_args.model == 'octuple':
+    elif parser_args.model.startswith('octuple'):
         H = HparamsOctuple(parser_args)
     else:
         parser_args.model = 'conv_transformer'

@@ -23,6 +23,9 @@ class AbsorbingDiffusion(Sampler):
         self.sample_schedule = H.sample_schedule
         self.register_buffer('mask_id', torch.tensor(mask_id))
 
+        # Partial masking strategy
+        self.masking_strategy = getattr(H, 'masking_strategy', None)
+
         # Track loss at each time step for importance sampling
         self.register_buffer('Lt_history', torch.zeros(self.num_timesteps+1))
         self.register_buffer('Lt_count', torch.zeros(self.num_timesteps+1))
@@ -92,6 +95,164 @@ class AbsorbingDiffusion(Sampler):
         x_0_ignore[torch.bitwise_not(mask)] = -1
         return x_t, x_0_ignore, mask
 
+    def q_sample_partial(self, x_0, t):
+        """
+        Implementation of partial masking strategies for Octuple MIDI.
+        x_0 shape: (Batch, SeqLen, 8)
+        """
+        x_t, x_0_ignore = x_0.clone(), x_0.clone()
+        b, seq_len, _ = x_0.shape
+        device = x_0.device
+
+        # Initialize mask with False
+        mask = torch.zeros_like(x_t, dtype=torch.bool, device=device)
+        
+        # Time-based probability of masking: t/T
+        time_prob = t.float() / self.num_timesteps # (Batch,)
+        
+        # Strategy Implementation
+        if self.masking_strategy == '1_bar_all':
+            # Mask Pitch, Duration, Velocity, Tempo over 1 bar
+            # Randomly select a bar for each sample
+            # Bar info is in index 0
+            
+            # 1. Identify valid bars for each sample (assuming bars are sequential/present)
+            # Simplification: Assume max bar from data or iterate. 
+            # Since x_0 is a batch, we need to handle per-sample logic or vectorize.
+            # Vectorized approach:
+            
+            # Find unique bars per sample is expensive. 
+            # Let's assume standard Octuple structure where [:, :, 0] are bar indices.
+            bar_indices = x_0[:, :, 0]
+            max_bars = bar_indices.max(dim=1)[0] # (Batch,)
+    
+            # Select random bar per sample
+            target_bars = (torch.rand(b, device=device) * (max_bars.float() + 1)).long() # (Batch,)
+            
+            # Expand for broadcasting
+            target_bars_exp = target_bars.unsqueeze(1).expand(-1, seq_len) # (Batch, SeqLen)
+            
+            # Construct candidate mask: match bar and attributes
+            # Attributes to mask: Pitch(3), Duration(4), Velocity(5), Tempo(7)
+            target_attributes = torch.tensor([3, 4, 5, 7], device=device)
+            
+            # Create attribute mask
+            attr_mask = torch.zeros(8, dtype=torch.bool, device=device)
+            attr_mask[target_attributes] = True
+            attr_mask = attr_mask.unsqueeze(0).unsqueeze(0).expand(b, seq_len, -1) # (Batch, SeqLen, 8)
+            
+            # Combine: (Bar match) AND (Attribute match)
+            candidate_mask = (bar_indices == target_bars_exp).unsqueeze(-1) & attr_mask
+
+        elif self.masking_strategy == '2_bar_all':
+            # Mask Pitch, Duration, Velocity, Tempo over 2 bars
+            bar_indices = x_0[:, :, 0]
+            max_bars = bar_indices.max(dim=1)[0]
+            
+            # Need to pick 2 distinct bars. Simplest: pick start random, wrap around or clamp.
+            # Better: pick 2 random integers per batch.
+            r1 = (torch.rand(b, device=device) * (max_bars.float() + 1)).long()
+            r2 = (torch.rand(b, device=device) * (max_bars.float() + 1)).long()
+            # If r1 == r2, it effectively masks 1 bar. That's acceptable randomness, or we could force distinct.
+            # Let's simple random, allowing overlap (rare for large bar counts).
+            
+            target_bars1 = r1.unsqueeze(1).expand(-1, seq_len)
+            target_bars2 = r2.unsqueeze(1).expand(-1, seq_len)
+            
+            target_attributes = torch.tensor([3, 4, 5, 7], device=device)
+            attr_mask = torch.zeros(8, dtype=torch.bool, device=device)
+            attr_mask[target_attributes] = True
+            attr_mask = attr_mask.unsqueeze(0).unsqueeze(0).expand(b, seq_len, -1)
+            
+            bar_match = (bar_indices == target_bars1) | (bar_indices == target_bars2)
+            candidate_mask = bar_match.unsqueeze(-1) & attr_mask
+
+        elif self.masking_strategy == '1_bar_attribute':
+            # Randomly pick ONE of {Pitch, Dur, Vel, Tempo} and mask it for 1 random bar
+            # Per sample defined strategy
+            
+            bar_indices = x_0[:, :, 0]
+            max_bars = bar_indices.max(dim=1)[0]
+            target_bars = (torch.rand(b, device=device) * (max_bars.float() + 1)).long()
+            target_bars_exp = target_bars.unsqueeze(1).expand(-1, seq_len)
+            
+            # Available attributes: 3, 4, 5, 7
+            avail_attrs = torch.tensor([3, 4, 5, 7], device=device)
+            # Pick one index per sample from 0..3
+            rand_indices = (torch.rand(b, device=device) * 4).long()
+            selected_attrs = avail_attrs[rand_indices] # (Batch,)
+            
+            selected_attrs_exp = selected_attrs.unsqueeze(1).expand(-1, seq_len).unsqueeze(-1) # (Batch, SeqLen, 1)
+            # Create full index tensor for last dim to compare
+            feature_indices = torch.arange(8, device=device).unsqueeze(0).unsqueeze(0).expand(b, seq_len, 8)
+            
+            attr_mask = (feature_indices == selected_attrs_exp)
+            
+            candidate_mask = (bar_indices == target_bars_exp).unsqueeze(-1) & attr_mask
+
+        elif self.masking_strategy == '2_bar_attribute':
+            # Randomly pick ONE of {Pitch, Dur, Vel, Tempo} and mask it for 2 random bars
+            
+            bar_indices = x_0[:, :, 0]
+            max_bars = bar_indices.max(dim=1)[0]
+            r1 = (torch.rand(b, device=device) * (max_bars.float() + 1)).long()
+            r2 = (torch.rand(b, device=device) * (max_bars.float() + 1)).long()
+            
+            target_bars1 = r1.unsqueeze(1).expand(-1, seq_len)
+            target_bars2 = r2.unsqueeze(1).expand(-1, seq_len)
+            
+            avail_attrs = torch.tensor([3, 4, 5, 7], device=device)
+            rand_indices = (torch.rand(b, device=device) * 4).long()
+            selected_attrs = avail_attrs[rand_indices]
+            
+            selected_attrs_exp = selected_attrs.unsqueeze(1).expand(-1, seq_len).unsqueeze(-1)
+            feature_indices = torch.arange(8, device=device).unsqueeze(0).unsqueeze(0).expand(b, seq_len, 8)
+            
+            attr_mask = (feature_indices == selected_attrs_exp)
+            bar_match = (bar_indices == target_bars1) | (bar_indices == target_bars2)
+            
+            candidate_mask = bar_match.unsqueeze(-1) & attr_mask
+
+        elif self.masking_strategy == 'rand_attribute':
+             # Randomly pick ONE of {Pitch, Dur, Vel, Tempo} and mask it randomly across the sequence
+            
+            avail_attrs = torch.tensor([3, 4, 5, 7], device=device)
+            rand_indices = (torch.rand(b, device=device) * 4).long()
+            selected_attrs = avail_attrs[rand_indices]
+            
+            selected_attrs_exp = selected_attrs.unsqueeze(1).expand(-1, seq_len).unsqueeze(-1)
+            feature_indices = torch.arange(8, device=device).unsqueeze(0).unsqueeze(0).expand(b, seq_len, 8)
+            
+            candidate_mask = (feature_indices == selected_attrs_exp)
+
+        else:
+             # Fallback or error usage
+             raise ValueError(f"Unknown masking strategy: {self.masking_strategy}")
+
+        # Apply Time-dependence
+        # "on the maximum t (1024) the probability of masking ... is 100% and it decreases until t=0... is 0%"
+        # Effectively: Final_Mask = Candidate_Mask AND (Bernoulli(t/T))
+        
+        # Make random mask for time dependence
+        time_rand_mask = torch.rand_like(x_t.float()) < (time_prob.view(-1, 1, 1))
+        
+        # Combine
+        mask = candidate_mask & time_rand_mask
+        
+        # Apply mask
+        x_t[mask] = self.mask_id[0] # Assuming broadcast or single mask_id, logic below handles tuple mask_id
+        
+        # Fix for tuple mask_id since AbsorbingDiffusion uses a list/tensor of mask_ids for different channels if needed?
+        # Original code: x_t[:, :, i][mask[:, :, i]] = self.mask_id[i]
+        # Our mask is (B, L, 8). self.mask_id is likely shape (8,)
+        
+        for i in range(len(self.mask_id)):
+             x_t[:, :, i][mask[:, :, i]] = self.mask_id[i]
+        
+        x_0_ignore[torch.bitwise_not(mask)] = -1
+        
+        return x_t, x_0_ignore, mask
+
     def _train_loss(self, x_0):
         x_0 = x_0.long()
         b, device = x_0.size(0), x_0.device
@@ -101,7 +262,9 @@ class AbsorbingDiffusion(Sampler):
 
         # make x noisy and denoise
 
-        if self.mask_schedule == 'random':
+        if self.masking_strategy is not None:
+             x_t, x_0_ignore, mask = self.q_sample_partial(x_0=x_0, t=t)
+        elif self.mask_schedule == 'random':
             x_t, x_0_ignore, mask = self.q_sample(x_0=x_0, t=t)
         elif self.mask_schedule == 'fixed':
             x_t, x_0_ignore, mask = self.q_sample_mlm(x_0=x_0, t=t)
