@@ -57,7 +57,8 @@ def test_masking_strategies():
         '2_bar_all', 
         '1_bar_attribute', 
         '2_bar_attribute', 
-        'rand_attribute'
+        'rand_attribute',
+        'mixed'
     ]
     
     for strategy in strategies:

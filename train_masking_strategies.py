@@ -8,11 +8,12 @@ import shutil
 
 # Strategies to train
 strategies = [
-    '1_bar_all',
-    '2_bar_all',
-    '1_bar_attribute',
-    '2_bar_attribute',
-    'rand_attribute'
+    # '1_bar_all',
+    # '2_bar_all',
+    # '1_bar_attribute',
+    # '2_bar_attribute',
+    # 'rand_attribute'
+    'mixed' # Train the unified mixed model
 ]
 
 # Base model name
@@ -28,9 +29,9 @@ tracks = "melody" # Used for log directory naming
 epochs = "150"
 train_steps = "100000"
 steps_per_log = "10"
-steps_per_eval = "2000"
-steps_per_sample = "2000"
-steps_per_checkpoint = "500"
+steps_per_eval = "3000"
+steps_per_sample = "3000"
+steps_per_checkpoint = "1000"
 
 SCRATCH_DIR_BASE = "/work/scratch/lconconi"
 

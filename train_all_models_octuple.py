@@ -19,8 +19,8 @@ tracks = "melody" # Used for log directory naming, even if octuple handles more
 epochs = "150"
 train_steps = "100000"
 steps_per_log = "10"
-steps_per_eval = "2000"
-steps_per_sample = "2000"
+steps_per_eval = "3000"
+steps_per_sample = "3000"
 steps_per_checkpoint = "500"
 
 SCRATCH_DIR_BASE = "/work/scratch/lconconi"

@@ -111,7 +111,39 @@ class AbsorbingDiffusion(Sampler):
         time_prob = t.float() / self.num_timesteps # (Batch,)
         
         # Strategy Implementation
-        if self.masking_strategy == '1_bar_all':
+        current_strategy = self.masking_strategy
+
+        if current_strategy == 'mixed':
+            # Randomly select a strategy from the pool
+            # Pool includes the 5 partial strategies AND 'random' (standard full masking)
+            strategies = [
+                '1_bar_all', 
+                '2_bar_all', 
+                '1_bar_attribute', 
+                '2_bar_attribute', 
+                'rand_attribute',
+                'random'
+            ]
+            # Select one strategy for the entire batch (simplest implementation)
+            # OR per sample? Per batch is standard for training stability.
+            current_strategy = strategies[np.random.randint(len(strategies))]
+        
+        # If 'random' is selected (either explicitly or via mixed), use standard q_sample
+        # But q_sample returns (x_t, x_0_ignore, mask).
+        # Here we want to match the return signature and logic.
+        if current_strategy == 'random':
+             # Use standard q_sample logic (Bernoulli mask based on t)
+             # q_sample logic: mask = rand < t/T
+             # We can just replicate it here efficiently
+             mask = torch.rand_like(x_t.float()) < time_prob.view(-1, 1, 1)
+             
+             # Apply mask
+             for i in range(len(self.mask_id)):
+                x_t[:, :, i][mask[:, :, i]] = self.mask_id[i]
+             x_0_ignore[torch.bitwise_not(mask)] = -1
+             return x_t, x_0_ignore, mask
+
+        if current_strategy == '1_bar_all':
             # Mask Pitch, Duration, Velocity, Tempo over 1 bar
             # Randomly select a bar for each sample
             # Bar info is in index 0
@@ -144,7 +176,7 @@ class AbsorbingDiffusion(Sampler):
             # Combine: (Bar match) AND (Attribute match)
             candidate_mask = (bar_indices == target_bars_exp).unsqueeze(-1) & attr_mask
 
-        elif self.masking_strategy == '2_bar_all':
+        elif current_strategy == '2_bar_all':
             # Mask Pitch, Duration, Velocity, Tempo over 2 bars
             bar_indices = x_0[:, :, 0]
             max_bars = bar_indices.max(dim=1)[0]
@@ -167,7 +199,7 @@ class AbsorbingDiffusion(Sampler):
             bar_match = (bar_indices == target_bars1) | (bar_indices == target_bars2)
             candidate_mask = bar_match.unsqueeze(-1) & attr_mask
 
-        elif self.masking_strategy == '1_bar_attribute':
+        elif current_strategy == '1_bar_attribute':
             # Randomly pick ONE of {Pitch, Dur, Vel, Tempo} and mask it for 1 random bar
             # Per sample defined strategy
             
@@ -190,7 +222,7 @@ class AbsorbingDiffusion(Sampler):
             
             candidate_mask = (bar_indices == target_bars_exp).unsqueeze(-1) & attr_mask
 
-        elif self.masking_strategy == '2_bar_attribute':
+        elif current_strategy == '2_bar_attribute':
             # Randomly pick ONE of {Pitch, Dur, Vel, Tempo} and mask it for 2 random bars
             
             bar_indices = x_0[:, :, 0]
@@ -213,7 +245,7 @@ class AbsorbingDiffusion(Sampler):
             
             candidate_mask = bar_match.unsqueeze(-1) & attr_mask
 
-        elif self.masking_strategy == 'rand_attribute':
+        elif current_strategy == 'rand_attribute':
              # Randomly pick ONE of {Pitch, Dur, Vel, Tempo} and mask it randomly across the sequence
             
             avail_attrs = torch.tensor([3, 4, 5, 7], device=device)
