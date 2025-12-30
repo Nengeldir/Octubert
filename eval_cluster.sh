@@ -4,8 +4,7 @@
 #SBATCH --time=01:00:00
 #SBATCH --gpus=1
 #SBATCH --mem=32G
-#SBATCH --array=1-3
-#SBATCH --output=logs/eval_%a.log
+#SBATCH --output=logs/eval_all.log
 
 # Enable module command
 . /etc/profile.d/modules.sh
@@ -24,54 +23,26 @@ source venv/bin/activate
 # Install dependencies if not already installed
 pip install --upgrade pip setuptools wheel
 pip install torch torchvision torchaudio
-pip install -q -r requirements.txt
-pip install -q note-seq
+pip install numpy scipy scikit-learn tqdm note-seq
 
 # Define model configs
-# Model 1: Baseline A (event + random)
 MODEL1_DIR="log_transformer_melody_1024"
 MODEL1_STEP=36500
-MODEL1_NAME="transformer"
 
-# Model 2: Baseline B (octuple + random)
 MODEL2_DIR="log_octuple_melody_1024"
 MODEL2_STEP=32000
-MODEL2_NAME="transformer"
 
-# Model 3: Proposed (octuple + bar-aligned)
 MODEL3_DIR="log_octuple_1_bar_all_1024"
 MODEL3_STEP=32000
-MODEL3_NAME="transformer"
 
-# Select which model to run based on SLURM_ARRAY_TASK_ID
-case ${SLURM_ARRAY_TASK_ID} in
-    1)
-        LOAD_DIR="${MODEL1_DIR}"
-        LOAD_STEP=${MODEL1_STEP}
-        MODEL_NAME="${MODEL1_NAME}"
-        echo "Running Baseline A (Event + Random): ${LOAD_DIR}"
-        ;;
-    2)
-        LOAD_DIR="${MODEL2_DIR}"
-        LOAD_STEP=${MODEL2_STEP}
-        MODEL_NAME="${MODEL2_NAME}"
-        echo "Running Baseline B (Octuple + Random): ${LOAD_DIR}"
-        ;;
-    3)
-        LOAD_DIR="${MODEL3_DIR}"
-        LOAD_STEP=${MODEL3_STEP}
-        MODEL_NAME="${MODEL3_NAME}"
-        echo "Running Proposed (Octuple + Partial / Bar-Aligned): ${LOAD_DIR}"
-        ;;
-esac
-
-# Run evaluation
-python evaluate_metrics.py \
+# Run all three evaluations sequentially
+echo "Running Baseline A (Event + Random): ${MODEL1_DIR}"
+python3 evaluate_metrics.py \
     --mode unconditional \
     --n_samples 64 \
-    --load_dir "${LOAD_DIR}" \
-    --load_step ${LOAD_STEP} \
-    --model "${MODEL_NAME}" \
+    --load_dir "${MODEL1_DIR}" \
+    --load_step ${MODEL1_STEP} \
+    --model "transformer" \
     --tracks melody \
     --bars 64 \
     --split_partition test \
@@ -80,4 +51,34 @@ python evaluate_metrics.py \
     --save_midis \
     --seed 123
 
-echo "Evaluation complete for model ${SLURM_ARRAY_TASK_ID}"
+echo "Running Baseline B (Octuple + Random): ${MODEL2_DIR}"
+python3 evaluate_metrics.py \
+    --mode unconditional \
+    --n_samples 64 \
+    --load_dir "${MODEL2_DIR}" \
+    --load_step ${MODEL2_STEP} \
+    --model "transformer" \
+    --tracks melody \
+    --bars 64 \
+    --split_partition test \
+    --bootstrap_ci \
+    --n_bootstrap 1000 \
+    --save_midis \
+    --seed 123
+
+echo "Running Proposed (Octuple + Bar-Aligned): ${MODEL3_DIR}"
+python3 evaluate_metrics.py \
+    --mode unconditional \
+    --n_samples 64 \
+    --load_dir "${MODEL3_DIR}" \
+    --load_step ${MODEL3_STEP} \
+    --model "transformer" \
+    --tracks melody \
+    --bars 64 \
+    --split_partition test \
+    --bootstrap_ci \
+    --n_bootstrap 1000 \
+    --save_midis \
+    --seed 123
+
+echo "All evaluations complete"
