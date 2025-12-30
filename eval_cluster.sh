@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=eval_diffusion_models
-#SBATCH --account=dl_jobs
+#SBATCH --account=deep_learning
 #SBATCH --time=01:00:00
 #SBATCH --gpus=1
 #SBATCH --mem=32G
@@ -15,16 +15,15 @@ module add cuda/12.9
 REPO_DIR="${HOME}/symbolic-music-discrete-diffusion-fork"
 cd "${REPO_DIR}"
 
-# Initialize conda
-eval "$(conda shell.bash hook)"
-
-# Create and activate conda environment (first run only)
-if [ ! -d "${HOME}/miniconda3/envs/diffusion_eval" ]; then
-    conda env create -f env.yml -n diffusion_eval
+# Create and activate venv (first run only)
+if [ ! -d "venv" ]; then
+    python3 -m venv venv
 fi
-conda activate diffusion_eval
+source venv/bin/activate
 
-# Install note-seq if not present
+# Install dependencies if not already installed
+pip install -q --upgrade pip
+pip install -q -r requirements.txt
 pip install -q note-seq
 
 # Define model configs
@@ -61,7 +60,7 @@ case ${SLURM_ARRAY_TASK_ID} in
         LOAD_DIR="${MODEL3_DIR}"
         LOAD_STEP=${MODEL3_STEP}
         MODEL_NAME="${MODEL3_NAME}"
-        echo "Running Proposed (Octuple + Bar-Aligned): ${LOAD_DIR}"
+        echo "Running Proposed (Octuple + Partial / Bar-Aligned): ${LOAD_DIR}"
         ;;
 esac
 
