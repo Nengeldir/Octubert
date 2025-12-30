@@ -2,43 +2,30 @@
 #SBATCH --job-name=eval_diffusion_models
 #SBATCH --account=dl_jobs
 #SBATCH --time=01:00:00
-#SBATCH --nodes=1
-#SBATCH --ntasks=1
 #SBATCH --gpus=1
-#SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --array=1-3
 #SBATCH --output=logs/eval_%a.log
 
-# Load modules (adjust based on your cluster setup)
-module load cuda/11.8
-module load python/3.10
+# Enable module command
+. /etc/profile.d/modules.sh
+module add cuda/12.9
 
-# Set up paths
-SCRATCH_DIR="/work/scratch/${USER}/diffusion_eval"
-REPO_DIR="${SCRATCH_DIR}/symbolic-music-discrete-diffusion-fork"
-LOCAL_REPO="/path/to/local/symbolic-music-discrete-diffusion-fork"
-
-# Create scratch directories
-mkdir -p "${SCRATCH_DIR}"
-cd "${SCRATCH_DIR}"
-
-# Clone repo (if not already present)
-if [ ! -d "${REPO_DIR}" ]; then
-    git clone <your-repo-url> "${REPO_DIR}"
-fi
-
+# Set up repo directory
+REPO_DIR="${HOME}/symbolic-music-discrete-diffusion-fork"
 cd "${REPO_DIR}"
 
-# Create virtual environment (first run only)
-if [ ! -d "venv" ]; then
-    python -m venv venv
-    source venv/bin/activate
-    pip install -q -r requirements.txt
-    pip install -q note-seq
-else
-    source venv/bin/activate
+# Initialize conda
+eval "$(conda shell.bash hook)"
+
+# Create and activate conda environment (first run only)
+if [ ! -d "${HOME}/miniconda3/envs/diffusion_eval" ]; then
+    conda env create -f env.yml -n diffusion_eval
 fi
+conda activate diffusion_eval
+
+# Install note-seq if not present
+pip install -q note-seq
 
 # Define model configs
 # Model 1: Baseline A (event + random)
