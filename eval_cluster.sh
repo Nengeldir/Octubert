@@ -23,7 +23,7 @@ source venv/bin/activate
 # Install dependencies if not already installed
 pip install --upgrade pip setuptools wheel
 pip install torch torchvision torchaudio
-pip install numpy scipy scikit-learn tqdm note-seq
+pip install --prefer-binary -r requirements.txt
 
 # Define model configs
 MODEL1_DIR="log_transformer_melody_1024"
