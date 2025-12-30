@@ -41,15 +41,27 @@ def load_split_ids(split_path: str, partition: str) -> List[str]:
     return _expand_ids(raw)
 
 
-def load_processed_subset(processed_dir: str, ids: List[str]) -> np.ndarray:
+def load_processed_subset(processed_dir: str, ids: List[str], pad_length: int = 1024) -> np.ndarray:
     """Load and stack per-song .npy files for the selected ids.
 
-    Assumes consistent shapes across files. Raises FileNotFoundError if any id is missing.
+    Pads/truncates each song to pad_length to ensure consistent shapes.
     """
     arrays = []
     for i in ids:
         path = os.path.join(processed_dir, f"{i}.npy")
         if not os.path.isfile(path):
             raise FileNotFoundError(f"Missing processed file: {path}")
-        arrays.append(np.load(path, allow_pickle=True))
+        arr = np.load(path, allow_pickle=True)
+        
+        # Pad or truncate to consistent length
+        if arr.shape[0] < pad_length:
+            # Pad with zeros
+            pad_width = ((0, pad_length - arr.shape[0]),) + tuple((0, 0) for _ in range(arr.ndim - 1))
+            arr = np.pad(arr, pad_width, mode='constant', constant_values=0)
+        else:
+            # Truncate
+            arr = arr[:pad_length]
+        
+        arrays.append(arr)
+    
     return np.stack(arrays)
