@@ -281,6 +281,15 @@ def main():
         val = getattr(args, key, None)
         if val is not None and val != 0:
             H[key] = val
+    
+    # Set default dataset_path if still None
+    if H.dataset_path is None:
+        if H.tracks == 'melody':
+            H.dataset_path = 'data/POP909_melody.npy'
+        elif H.tracks == 'trio':
+            H.dataset_path = 'data/POP909_trio.npy'
+        else:
+            H.dataset_path = 'data/POP909_octuple.npy'
 
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
