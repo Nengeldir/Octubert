@@ -21,9 +21,9 @@ fi
 source venv/bin/activate
 
 # Install dependencies if not already installed
-pip3 install --upgrade pip
+pip3 install --upgrade pip 'setuptools>=70.0.0' wheel
 pip3 install torch torchvision torchaudio
-pip3 install -r requirements.txt
+pip3 install --prefer-binary -r requirements.txt
 
 # Define model configs
 MODEL1_DIR="log_transformer_melody_1024"
