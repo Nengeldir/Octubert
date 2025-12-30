@@ -9,7 +9,7 @@
 
 # Enable module command
 . /etc/profile.d/modules.sh
-module add cuda/12.9
+module add cuda/12.8
 
 # Set up repo directory
 REPO_DIR="${HOME}/symbolic-music-discrete-diffusion-fork"
@@ -22,7 +22,8 @@ fi
 source venv/bin/activate
 
 # Install dependencies if not already installed
-pip install -q --upgrade pip
+pip install --upgrade pip setuptools wheel
+pip install torch torchvision torchaudio
 pip install -q -r requirements.txt
 pip install -q note-seq
 
