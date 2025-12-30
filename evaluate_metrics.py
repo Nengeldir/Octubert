@@ -75,6 +75,8 @@ def masked_token_accuracy(ref: np.ndarray, pred: np.ndarray, mask: np.ndarray) -
 def get_reference_subset(H, dataset: np.ndarray, eval_batch_size: int) -> Tuple[np.ndarray, np.ndarray]:
     """Sample a reference subset for metrics; returns subset and full dataset for shape info."""
     midi_data = SubseqSampler(dataset, H.NOTES)
+    # Cap eval_batch_size at available data
+    eval_batch_size = min(eval_batch_size, midi_data.dataset.shape[0])
     idx = np.random.choice(midi_data.dataset.shape[0], eval_batch_size)
     refs = midi_data[idx]
     return refs, midi_data.dataset
@@ -82,7 +84,9 @@ def get_reference_subset(H, dataset: np.ndarray, eval_batch_size: int) -> Tuple[
 
 def run_generation(H, sampler, dataset: np.ndarray, n_samples: int, mode: str, gap: Tuple[int, int], mask_tracks) -> Tuple[np.ndarray, np.ndarray]:
     """Generate samples (unconditional or infilling) alongside reference slices."""
-    refs, full_dataset = get_reference_subset(H, dataset, max(H.eval_batch_size, n_samples))
+    # Default eval_batch_size if not set (for sample mode)
+    eval_batch_size = getattr(H, 'eval_batch_size', None) or max(64, n_samples)
+    refs, full_dataset = get_reference_subset(H, dataset, max(eval_batch_size, n_samples))
     batch_size = H.sampling_batch_size
 
     if mode == "unconditional":

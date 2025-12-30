@@ -47,7 +47,7 @@ python3 evaluate_metrics.py \
     --model "transformer" \
     --tracks melody \
     --bars 64 \
-    --split_partition test \
+    --no_split \
     --bootstrap_ci \
     --n_bootstrap 1000 \
     --save_midis \
@@ -62,7 +62,7 @@ python3 evaluate_metrics.py \
     --model "transformer" \
     --tracks melody \
     --bars 64 \
-    --split_partition test \
+    --no_split \
     --bootstrap_ci \
     --n_bootstrap 1000 \
     --save_midis \
@@ -77,7 +77,7 @@ python3 evaluate_metrics.py \
     --model "transformer" \
     --tracks melody \
     --bars 64 \
-    --split_partition test \
+    --no_split \
     --bootstrap_ci \
     --n_bootstrap 1000 \
     --save_midis \
