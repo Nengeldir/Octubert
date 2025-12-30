@@ -1,0 +1,14 @@
+{
+  "scheme": "sequential",
+  "ranges": {
+    "train": ["001-727"],
+    "val": ["728-818"],
+    "test": ["819-909"]
+  },
+  "meta": {
+    "total": 909,
+    "val": 91,
+    "test": 91,
+    "seed": "fixed-sequential"
+  }
+}

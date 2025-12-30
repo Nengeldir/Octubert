@@ -2,3 +2,4 @@ logs/
 *.sf2
 .idea
 __pycache__
+.vscode
