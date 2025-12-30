@@ -259,9 +259,22 @@ def main():
     parser.add_argument("--sample_steps", type=int, default=None)
     args = parser.parse_args()
 
-    H = get_sampler_hparams("sample")
+    # Manually instantiate H based on model type to avoid double-parsing
+    from hparams.default_hparams import HparamsAbsorbing, HparamsAbsorbingConv, HparamsHierarchTransformer, HparamsUTransformer
+    
+    model_type = args.model or "transformer"
+    if model_type == 'transformer':
+        H = HparamsAbsorbing(args)
+    elif model_type == 'hierarch_transformer':
+        H = HparamsHierarchTransformer(args)
+    elif model_type == 'U_transformer':
+        H = HparamsUTransformer(args)
+    else:
+        H = HparamsAbsorbingConv(args)
+    
+    # Override with any explicitly set args
     for key in ["load_dir", "load_step", "model", "tracks", "bars", "dataset_path", "sample_steps"]:
-        val = getattr(args, key)
+        val = getattr(args, key, None)
         if val is not None and val != 0:
             H[key] = val
 
