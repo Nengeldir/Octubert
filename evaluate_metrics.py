@@ -507,11 +507,13 @@ def main():
     args = parser.parse_args()
 
     # Manually instantiate H based on model type to avoid double-parsing
-    from hparams.default_hparams import HparamsAbsorbing, HparamsAbsorbingConv, HparamsHierarchTransformer, HparamsUTransformer
+    from hparams.default_hparams import HparamsAbsorbing, HparamsAbsorbingConv, HparamsHierarchTransformer, HparamsUTransformer, HparamsOctuple
     
     model_type = args.model or "transformer"
     if model_type == 'transformer':
         H = HparamsAbsorbing(args)
+    elif model_type == 'octuple':
+        H = HparamsOctuple(args)
     elif model_type == 'hierarch_transformer':
         H = HparamsHierarchTransformer(args)
     elif model_type == 'U_transformer':

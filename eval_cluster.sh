@@ -59,7 +59,7 @@ python3 evaluate_metrics.py \
     --n_samples 64 \
     --load_dir "${MODEL2_DIR}" \
     --load_step ${MODEL2_STEP} \
-    --model "transformer" \
+    --model "octuple" \
     --tracks melody \
     --bars 64 \
     --no_split \
@@ -74,7 +74,7 @@ python3 evaluate_metrics.py \
     --n_samples 64 \
     --load_dir "${MODEL3_DIR}" \
     --load_step ${MODEL3_STEP} \
-    --model "transformer" \
+    --model "octuple" \
     --tracks melody \
     --bars 64 \
     --no_split \
