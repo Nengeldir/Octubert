@@ -82,6 +82,56 @@ def get_reference_subset(H, dataset: np.ndarray, eval_batch_size: int) -> Tuple[
     return refs, midi_data.dataset
 
 
+def apply_octuple_mask_np(x_0: np.ndarray, strategy: str) -> np.ndarray:
+    """Apply partial-masking strategies on octuple tensors (B, L, 8); returns boolean mask."""
+    b, seq_len, _ = x_0.shape
+    mask = np.zeros_like(x_0, dtype=bool)
+
+    bar_indices = x_0[:, :, 0]
+    max_bars = bar_indices.max(axis=1)
+
+    rng = np.random.default_rng()
+
+    def sample_bars(count):
+        return (rng.random(b) * (max_bars.astype(np.float64) + 1)).astype(int)
+
+    if strategy == '1_bar_all':
+        target_bars = sample_bars(1)
+        target_attr = np.array([3, 4, 5, 7])
+        for i in range(b):
+            bar_mask = bar_indices[i] == target_bars[i]
+            mask[i, bar_mask[:, None], target_attr] = True
+    elif strategy == '2_bar_all':
+        r1, r2 = sample_bars(1), sample_bars(1)
+        target_attr = np.array([3, 4, 5, 7])
+        for i in range(b):
+            bar_mask = (bar_indices[i] == r1[i]) | (bar_indices[i] == r2[i])
+            mask[i, bar_mask[:, None], target_attr] = True
+    elif strategy == '1_bar_attribute':
+        target_bars = sample_bars(1)
+        avail_attrs = np.array([3, 4, 5, 7])
+        sel_attr = avail_attrs[(rng.random(b) * 4).astype(int)]
+        for i in range(b):
+            bar_mask = bar_indices[i] == target_bars[i]
+            mask[i, bar_mask[:, None], sel_attr[i]] = True
+    elif strategy == '2_bar_attribute':
+        r1, r2 = sample_bars(1), sample_bars(1)
+        avail_attrs = np.array([3, 4, 5, 7])
+        sel_attr = avail_attrs[(rng.random(b) * 4).astype(int)]
+        for i in range(b):
+            bar_mask = (bar_indices[i] == r1[i]) | (bar_indices[i] == r2[i])
+            mask[i, bar_mask[:, None], sel_attr[i]] = True
+    elif strategy == 'rand_attribute':
+        avail_attrs = np.array([3, 4, 5, 7])
+        sel_attr = avail_attrs[(rng.random(b) * 4).astype(int)]
+        for i in range(b):
+            mask[i, :, sel_attr[i]] = True
+    else:
+        raise ValueError(f"Unknown octuple masking strategy: {strategy}")
+
+    return mask
+
+
 def run_generation(H, sampler, dataset: np.ndarray, n_samples: int, mode: str, gap: Tuple[int, int], mask_tracks) -> Tuple[np.ndarray, np.ndarray]:
     """Generate samples (unconditional or infilling) alongside reference slices."""
     # Default eval_batch_size if not set (for sample mode)
@@ -104,7 +154,17 @@ def run_generation(H, sampler, dataset: np.ndarray, n_samples: int, mode: str, g
     elif mode == "infilling":
         # start from refs, apply mask, then sample
         samples = refs.copy()
-        if mask_tracks:
+
+        if getattr(H, 'model', None) == 'octuple' and getattr(H, 'masking_strategy', None):
+            log(f"[gen] applying octuple masking_strategy={H.masking_strategy}")
+            mask = apply_octuple_mask_np(samples, H.masking_strategy)
+            mask_id = getattr(sampler, 'mask_id', None)
+            if mask_id is None:
+                raise ValueError("sampler.mask_id not set for octuple model")
+            mask_id_np = np.array(mask_id.cpu().numpy() if hasattr(mask_id, 'cpu') else mask_id)
+            for i in range(samples.shape[2]):
+                samples[:, :, i][mask[:, :, i]] = int(mask_id_np[i])
+        elif mask_tracks:
             for t in mask_tracks:
                 samples[:, gap[0]:gap[1], t] = H.codebook_size[t]
         else:
@@ -491,6 +551,7 @@ def main():
     parser.add_argument("--gap_start", type=int, default=-1)
     parser.add_argument("--gap_end", type=int, default=-1)
     parser.add_argument("--mask_tracks", nargs="*", type=int, default=[])
+    parser.add_argument("--masking_strategy", type=str, default=None, help="Octuple partial-masking strategy (e.g., 1_bar_all, 2_bar_all, 1_bar_attribute, 2_bar_attribute, rand_attribute, mixed)")
     parser.add_argument("--save_midis", action="store_true")
     parser.add_argument("--save_dir", type=str, default=None)
     parser.add_argument("--compute_fad", action="store_true", help="Compute structural FAD (cheap embedding)")
@@ -529,7 +590,7 @@ def main():
         H = HparamsAbsorbingConv(args)
     
     # Override with any explicitly set args
-    for key in ["load_dir", "load_step", "model", "tracks", "bars", "dataset_path", "sample_steps"]:
+    for key in ["load_dir", "load_step", "model", "tracks", "bars", "dataset_path", "sample_steps", "masking_strategy"]:
         val = getattr(args, key, None)
         if val is not None and val != 0:
             H[key] = val

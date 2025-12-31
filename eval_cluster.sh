@@ -78,6 +78,7 @@ python3 evaluate_metrics.py \
     --tracks melody \
     --bars 64 \
     --no_split \
+    --masking_strategy 1_bar_all \
     --bootstrap_ci \
     --n_bootstrap 1000 \
     --save_midis \
