@@ -254,7 +254,19 @@ def bar_level_summaries(tensors: np.ndarray) -> Tuple[float, float]:
     onset = (pitches > 1).astype(np.float32)
     pitch_var = pitches.astype(np.float32)
     pitch_var[pitch_var <= 1] = np.nan
-    pitch_var_mean = np.nanmean(np.nanvar(pitch_var, axis=2)) if np.isfinite(pitch_var).any() else float('nan')
+
+    # Only compute variance for bars with at least two finite pitches to avoid deg-of-freedom warnings.
+    flat = pitch_var.reshape(-1, pitch_var.shape[-1])
+    valid = np.sum(np.isfinite(flat), axis=1) >= 2
+    if valid.any():
+        bar_var = np.full(flat.shape[0], np.nan, dtype=np.float32)
+        with np.errstate(invalid='ignore'):
+            bar_var[valid] = np.nanvar(flat[valid], axis=1)
+        bar_var = bar_var.reshape(pitch_var.shape[:2])
+        pitch_var_mean = float(np.nanmean(bar_var))
+    else:
+        pitch_var_mean = float('nan')
+
     onset_density = onset.mean(axis=2).mean()
     return float(pitch_var_mean), float(onset_density)
 
@@ -612,6 +624,8 @@ def main():
         args.gap_end = (H.NOTES * 3) // 4
     gap = (args.gap_start, args.gap_end)
 
+    log("[main] loading dataset")
+
     # Load dataset respecting split if present
     if not args.no_split and os.path.isfile(args.split_path):
         split_ids = load_split_ids(args.split_path, args.split_partition)
@@ -619,7 +633,12 @@ def main():
     else:
         dataset = np.load(H.dataset_path, allow_pickle=True)
 
-    sampler = get_sampler(H).cuda()
+    log(f"[main] dataset loaded: {dataset.shape}")
+
+    log("[main] building sampler")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    sampler = get_sampler(H).to(device)
+    log("[main] loading weights")
     sampler = load_model(sampler, f"{H.sampler}_ema", H.load_step, H.load_dir)
 
     log("[main] starting generation")

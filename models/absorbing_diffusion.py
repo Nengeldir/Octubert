@@ -342,11 +342,12 @@ class AbsorbingDiffusion(Sampler):
         return loss.mean(), vb_loss.mean()
 
     def sample(self, temp=1.0, sample_steps=None, x_T=None, B=None, progress_handler=None):
-        b, device = self.sampling_batch_size, 'cuda'
-        if B is not None:
-            b = B
+        device = self.mask_id.device
+        b = self.sampling_batch_size if B is None else B
         if x_T is None:
             x_T = torch.ones((b, *self.shape), device=device).long() * self.mask_id
+        else:
+            x_T = x_T.to(device)
         b = x_T.shape[0]
         unmasked = torch.zeros_like(x_T, device=device, dtype=torch.bool)
         unmasked[x_T != self.mask_id] = True
@@ -388,7 +389,7 @@ class AbsorbingDiffusion(Sampler):
         return x_T
 
     def queue_sample_task(self, progress_handler, finished_handler, sample_steps=None, x_T=None, b=1):
-        device = 'cuda'
+        device = self.mask_id.device
 
         if x_T is None:
             x_T = torch.ones((b, *self.shape), device=device).long() * self.mask_id
@@ -405,7 +406,7 @@ class AbsorbingDiffusion(Sampler):
             self.task_queue.append((tensor, sample_steps, progress_handler, finished_handler))
 
     def sample_worker(self, temp=1.0):
-        device = 'cuda'
+        device = self.mask_id.device
         last_progress = 0
 
         x_T = torch.ones((0, *self.shape), device=device).long() * self.mask_id

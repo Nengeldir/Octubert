@@ -1,9 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=eval_diffusion_models
 #SBATCH --account=deep_learning
-#SBATCH --time=01:00:00
-#SBATCH --gpus=1
-#SBATCH --mem=32G
+#SBATCH --partition=student
+#SBATCH --time=02:00:00
 #SBATCH --output=logs/eval_all.log
 
 # Enable module command

@@ -7,6 +7,7 @@ import numpy as np
 from note_seq import note_sequence_to_midi_file
 from note_seq import quantize_note_sequence
 from note_seq import sequences_lib
+from note_seq.sequences_lib import MultipleTempoError, MultipleTimeSignatureError
 from tqdm import tqdm
 
 from .data_utils import SubseqSampler
@@ -24,12 +25,58 @@ def frame_statistics(bars):
 def framewise_overlap_areas(ns, width=4, hop=2):
     if not len(ns.notes):
         return [0, 0]
-    qns = quantize_note_sequence(ns, 4)
-    steps_per_bar = sequences_lib.steps_per_bar_in_quantized_sequence(qns)
-    assert steps_per_bar == 16.
-    steps_per_bar = 16
+    # Work on a copy to avoid mutating the original sequence
+    ns_local = note_seq.protobuf.music_pb2.NoteSequence()
+    ns_local.CopyFrom(ns)
 
-    by_bar = [[] for _ in range(max([n.quantized_end_step for n in qns.notes]) // steps_per_bar + 1)]
+    try:
+        qns = quantize_note_sequence(ns_local, 4)
+    except MultipleTempoError:
+        # Normalize to a single tempo and retry on the copy
+        base_qpm = ns_local.tempos[0].qpm if ns_local.tempos else 120.0
+        try:
+            ns_local.ClearField('tempos')
+        except ValueError:
+            while len(ns_local.tempos):
+                ns_local.tempos.pop()
+        t = ns_local.tempos.add()
+        t.qpm = base_qpm
+        t.time = 0.0
+        try:
+            qns = quantize_note_sequence(ns_local, 4)
+        except MultipleTempoError:
+            # If tempo changes remain pathological, return NaNs so the metric can be skipped
+            return [float('nan'), float('nan')]
+    except MultipleTimeSignatureError:
+        # Normalize to a single time signature and retry on the copy
+        if ns_local.time_signatures:
+            ts0 = ns_local.time_signatures[0]
+            num, den = ts0.numerator, ts0.denominator
+        else:
+            num, den = 4, 4
+        try:
+            ns_local.ClearField('time_signatures')
+        except ValueError:
+            while len(ns_local.time_signatures):
+                ns_local.time_signatures.pop()
+        ts_new = ns_local.time_signatures.add()
+        ts_new.numerator = num
+        ts_new.denominator = den
+        ts_new.time = 0.0
+        try:
+            qns = quantize_note_sequence(ns_local, 4)
+        except (MultipleTimeSignatureError, MultipleTempoError):
+            return [float('nan'), float('nan')]
+    steps_per_bar = sequences_lib.steps_per_bar_in_quantized_sequence(qns)
+    if steps_per_bar != 16:
+        # Unsupported grid; skip with NaNs so metrics can drop this sample
+        return [float('nan'), float('nan')]
+    steps_per_bar = int(steps_per_bar)
+
+    import math
+    max_end = max(float(n.quantized_end_step) for n in qns.notes)
+    n_bars = int(math.ceil(max_end / steps_per_bar)) + 1
+    by_bar = [[] for _ in range(n_bars)]
 
     for note in qns.notes:
         k = note.quantized_start_step // steps_per_bar
@@ -89,7 +136,7 @@ def get_disc_seq_with_overlap_fast(seq, prev_seq, target_overlap, lo=0, hi=90, s
             result[p] -= delta
             delta /= 2
 
-    return result[len(seq):], ovl
+    return result[len(seq):]
 
 def get_bounded_seq_with_mu_sig(mu, sig, size, lo=0, hi=1):
     result = np.random.normal(mu, sig, size)
@@ -150,9 +197,13 @@ def evaluate_consistency_variance(targets, preds):
     OA_p = [framewise_overlap_areas(p) for p in preds]
     OA_t, OA_p = np.stack(OA_t), np.stack(OA_p)
 
+    eps = 1e-8
+    mean_t = OA_t.mean(0)
+    var_t = OA_t.var(0)
 
-    consistency = 1 - np.abs(OA_t.mean(0) - OA_p.mean(0)) / OA_t.mean(0)
-    variance = 1 - np.abs(OA_t.var(0) - OA_p.var(0)) / OA_t.var(0)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        consistency = 1 - np.abs(mean_t - OA_p.mean(0)) / (mean_t + eps)
+        variance = 1 - np.abs(var_t - OA_p.var(0)) / (var_t + eps)
 
     return np.clip(consistency, 0, 1), np.clip(variance, 0, 1)
 

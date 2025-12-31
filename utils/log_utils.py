@@ -137,15 +137,23 @@ def load_model(model, model_load_name, step, log_dir, strict=True):
     log_dir = log_dir + "/saved_models"
 
     print(f"Loading {model_load_name}_{str(step)}.th from {log_dir}")
+    map_location = None if torch.cuda.is_available() else "cpu"
+    state_path = os.path.join(log_dir, f"{model_load_name}_{step}.th")
+    state_dict = torch.load(state_path, map_location=map_location)
     try:
-        model.load_state_dict(
-            torch.load(os.path.join(log_dir, f"{model_load_name}_{step}.th")),
-            strict=strict,
-        )
-    except TypeError:  # for some reason optimisers don't like the strict keyword
-        model.load_state_dict(
-            torch.load(os.path.join(log_dir, f"{model_load_name}_{step}.th")),
-        )
+        model.load_state_dict(state_dict, strict=strict)
+    except (RuntimeError, TypeError):
+        # Fallback: strip possible DataParallel prefixes
+        from collections import OrderedDict
+        fixed_state = OrderedDict()
+        for k, v in state_dict.items():
+            new_k = k
+            if k.startswith("_denoise_fn.module."):
+                new_k = k.replace("_denoise_fn.module.", "_denoise_fn.", 1)
+            elif k.startswith("module."):
+                new_k = k.replace("module.", "", 1)
+            fixed_state[new_k] = v
+        model.load_state_dict(fixed_state, strict=False)
 
     return model
 

@@ -6,22 +6,27 @@ from torch.nn import DataParallel
 # from .log_utils import save_latents, log
 from models import Transformer, AbsorbingDiffusion, ConVormer, HierarchTransformer, UTransformer
 from preprocessing import OneHotMelodyConverter, TrioConverter
+from utils.octuple import OctupleEncoding
+from note_seq import midi_to_note_sequence
 
 
 def get_sampler(H):
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
     if H.model == 'transformer' or H.model.startswith('octuple'):
-        denoise_fn = Transformer(H).cuda()
+        denoise_fn = Transformer(H)
     elif H.model == 'hierarch_transformer':
-        denoise_fn = HierarchTransformer(H).cuda()
+        denoise_fn = HierarchTransformer(H)
     elif H.model == 'U_transformer':
-        denoise_fn = UTransformer(H).cuda()
+        denoise_fn = UTransformer(H)
     else:
-        denoise_fn = ConVormer(H).cuda()
+        denoise_fn = ConVormer(H)
 
-    denoise_fn = DataParallel(denoise_fn).cuda()
-    sampler = AbsorbingDiffusion(
-        H, denoise_fn, H.codebook_size)
+    denoise_fn = denoise_fn.to(device)
+    if device == "cuda" and torch.cuda.device_count() > 1:
+        denoise_fn = DataParallel(denoise_fn)
 
+    sampler = AbsorbingDiffusion(H, denoise_fn, H.codebook_size).to(device)
     return sampler
 
 
@@ -43,6 +48,25 @@ def np_to_ns(x):
     elif x.shape[-1] == 3:
         converter = TrioConverter()
         return converter.from_tensors(x)
+    elif x.shape[-1] == 8:
+        enc = OctupleEncoding()
+        seqs = []
+        import tempfile, os
+        for sample in x:
+            midi_obj = enc.decode(sample)
+            tmp = tempfile.NamedTemporaryFile(suffix='.mid', delete=False)
+            tmp_path = tmp.name
+            tmp.close()  # Windows needs the handle closed before reuse
+            try:
+                midi_obj.dump(tmp_path)
+                with open(tmp_path, 'rb') as fh:
+                    seqs.append(midi_to_note_sequence(fh.read()))
+            finally:
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+        return seqs
     else:
         raise Exception(f"unsupported number of tracks: {x.shape[-1]}")
 
