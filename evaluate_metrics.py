@@ -123,6 +123,249 @@ def run_generation(H, sampler, dataset: np.ndarray, n_samples: int, mode: str, g
     return samples, refs
 
 
+# --- Structure-focused helpers (defined before compute_metrics) ---
+
+
+def split_bars(tensors: np.ndarray, steps_per_bar: int = 16) -> np.ndarray:
+    """Reshape sequences into [B, bars, steps_per_bar, C] for bar-level analysis."""
+    # tensors: [B, T, C]
+    T = tensors.shape[1]
+    n_bars = T // steps_per_bar
+    trimmed = tensors[:, : n_bars * steps_per_bar]
+    return trimmed.reshape(trimmed.shape[0], n_bars, steps_per_bar, tensors.shape[-1])
+
+
+def bar_pitch_vectors(tensors: np.ndarray) -> np.ndarray:
+    """Bar-level pitch-class vectors; basis for repetition and key proxies."""
+    bars = split_bars(tensors)
+    B, NB, _, C = bars.shape
+    vecs = np.zeros((B, NB, 12), dtype=np.float64)
+    pitches = bars[..., 0]
+    mask = (pitches > 1) & (pitches < 90)
+    for b in range(B):
+        for j in range(NB):
+            pj = pitches[b, j][mask[b, j]]
+            if pj.size:
+                vecs[b, j] = np.bincount(pj % 12, minlength=12)
+    return vecs
+
+
+def self_similarity_score(tensors: np.ndarray) -> float:
+    """Average cosine similarity of consecutive bars (higher = more repetition/structure)."""
+    vecs = bar_pitch_vectors(tensors)
+    sims = []
+    for v in vecs:
+        if v.shape[0] < 2:
+            continue
+        # cosine similarities between consecutive bars (repetition/coherence proxy)
+        a = v[:-1]
+        b = v[1:]
+        denom = (np.linalg.norm(a, axis=1) * np.linalg.norm(b, axis=1) + 1e-8)
+        s = (a * b).sum(axis=1) / denom
+        sims.append(s.mean())
+    if not sims:
+        return float('nan')
+    return float(np.mean(sims))
+
+
+def key_consistency(tensors: np.ndarray) -> Tuple[float, int]:
+    """Dominant pitch class per bar; returns stability score and global mode key."""
+    vecs = bar_pitch_vectors(tensors)
+    keys = np.argmax(vecs, axis=2)  # dominant pitch class per bar
+    cons = []
+    mode_keys = []
+    for ks in keys:
+        values, counts = np.unique(ks, return_counts=True)
+        mode = values[np.argmax(counts)]
+        mode_keys.append(mode)
+        cons.append((ks == mode).mean())
+    if not cons:
+        return float('nan'), -1
+    return float(np.mean(cons)), int(np.bincount(mode_keys, minlength=12).argmax())
+
+
+def bar_level_summaries(tensors: np.ndarray) -> Tuple[float, float]:
+    """Mean pitch variance and onset density per bar; simple structure indicators."""
+    bars = split_bars(tensors)
+    pitches = bars[..., 0]
+    onset = (pitches > 1).astype(np.float32)
+    pitch_var = pitches.astype(np.float32)
+    pitch_var[pitch_var <= 1] = np.nan
+    pitch_var_mean = np.nanmean(np.nanvar(pitch_var, axis=2)) if np.isfinite(pitch_var).any() else float('nan')
+    onset_density = onset.mean(axis=2).mean()
+    return float(pitch_var_mean), float(onset_density)
+
+
+def phrase_level_self_similarity(tensors: np.ndarray, phrase_bars: int = 4) -> float:
+    """Cosine similarity between consecutive phrases (multi-bar chunks) to capture long-range structure.
+    
+    Higher values indicate repeated phrase-level motifs (e.g., verse/chorus structure).
+    """
+    vecs = bar_pitch_vectors(tensors)
+    sims = []
+    
+    for v in vecs:
+        n_bars = v.shape[0]
+        if n_bars < phrase_bars * 2:
+            continue
+        
+        # Aggregate bars into phrases
+        n_phrases = n_bars // phrase_bars
+        phrases = []
+        for p in range(n_phrases):
+            phrase_vec = v[p * phrase_bars: (p + 1) * phrase_bars].sum(axis=0)
+            phrases.append(phrase_vec)
+        
+        phrases = np.array(phrases)
+        if len(phrases) < 2:
+            continue
+        
+        # Consecutive phrase similarity
+        a = phrases[:-1]
+        b = phrases[1:]
+        norms = np.linalg.norm(a, axis=1) * np.linalg.norm(b, axis=1) + 1e-8
+        s = (a * b).sum(axis=1) / norms
+        sims.append(s.mean())
+    
+    return float(np.mean(sims)) if sims else float('nan')
+
+
+def harmonic_flux(tensors: np.ndarray) -> float:
+    """Measure harmonic change rate by tracking pitch-class centroid shifts per bar.
+    
+    Higher flux = more harmonic movement; lower = stable harmony. Typical range 0.2–0.6.
+    """
+    vecs = bar_pitch_vectors(tensors)
+    fluxes = []
+    
+    for v in vecs:
+        if v.shape[0] < 2:
+            continue
+        
+        # Compute centroids (weighted pitch-class mean)
+        centroids = []
+        for bar_vec in v:
+            total = bar_vec.sum()
+            if total > 0:
+                centroid = np.dot(bar_vec, np.arange(12)) / total
+                centroids.append(centroid)
+            else:
+                centroids.append(0.0)
+        
+        centroids = np.array(centroids)
+        if len(centroids) < 2:
+            continue
+        
+        # Flux = average absolute difference between consecutive centroids (normalized)
+        diffs = np.abs(np.diff(centroids))
+        # Normalize by wrapping around octave (12 semitones)
+        diffs = np.minimum(diffs, 12 - diffs)
+        fluxes.append(diffs.mean() / 12.0)  # normalize to [0, 1]
+    
+    return float(np.mean(fluxes)) if fluxes else float('nan')
+
+
+def infill_rhythm_correlation(samples: np.ndarray, gap: Tuple[int, int]) -> float:
+    """Compute correlation of onset density between masked span and surrounding context.
+    
+    Higher correlation suggests better rhythmic continuity between infill and context.
+    """
+    bars = split_bars(samples)
+    steps_per_bar = 16
+    gap_bar_start = gap[0] // steps_per_bar
+    gap_bar_end = gap[1] // steps_per_bar
+    
+    correlations = []
+    for b in range(bars.shape[0]):
+        pitches = bars[b, :, :, 0]
+        onset = (pitches > 1).astype(np.float32).mean(axis=1)  # onset density per bar
+        
+        if gap_bar_start > 0 and gap_bar_end < len(onset):
+            context = np.concatenate([onset[:gap_bar_start], onset[gap_bar_end:]])
+            infill = onset[gap_bar_start:gap_bar_end]
+            
+            if len(context) > 1 and len(infill) > 1:
+                # Pearson correlation between context mean and infill bars
+                context_mean = context.mean()
+                corr = np.corrcoef(infill, np.full_like(infill, context_mean))[0, 1]
+                if np.isfinite(corr):
+                    correlations.append(corr)
+    
+    return float(np.mean(correlations)) if correlations else float('nan')
+
+
+def masked_span_embedding_similarity(refs: np.ndarray, samples: np.ndarray, gap: Tuple[int, int]) -> float:
+    """Cosine similarity of bar pitch vectors between reference and generated masked span.
+    
+    Higher similarity indicates better reconstruction of the masked region's harmonic content.
+    """
+    steps_per_bar = 16
+    gap_bar_start = gap[0] // steps_per_bar
+    gap_bar_end = gap[1] // steps_per_bar
+    
+    ref_vecs = bar_pitch_vectors(refs)
+    sample_vecs = bar_pitch_vectors(samples)
+    
+    similarities = []
+    for b in range(ref_vecs.shape[0]):
+        ref_span = ref_vecs[b, gap_bar_start:gap_bar_end]
+        sample_span = sample_vecs[b, gap_bar_start:gap_bar_end]
+        
+        for i in range(len(ref_span)):
+            r = ref_span[i]
+            s = sample_span[i]
+            norm = np.linalg.norm(r) * np.linalg.norm(s)
+            if norm > 1e-8:
+                sim = (r @ s) / norm
+                similarities.append(sim)
+    
+    return float(np.mean(similarities)) if similarities else float('nan')
+
+
+def structural_embedding(tensors: np.ndarray) -> np.ndarray:
+    """Cheap structural embedding: normalized pitch-class histogram + onset stats per sample."""
+    # Cheap structural embedding: bar pitch class histogram + onset density per bar, averaged and flattened
+    bars = split_bars(tensors)
+    B, NB, _, _ = bars.shape
+    vecs = []
+    for b in range(B):
+        pitch_vec = np.zeros(12)
+        onset_vec = []
+        for j in range(NB):
+            pj = bars[b, j, :, 0]
+            mask = (pj > 1) & (pj < 90)
+            pitch_vec += np.bincount(pj[mask] % 12, minlength=12)
+            onset_vec.append(mask.mean())
+        onset_vec = np.array(onset_vec)
+        pitch_vec = pitch_vec / (pitch_vec.sum() + 1e-8)
+        vecs.append(np.concatenate([pitch_vec, onset_vec.mean(keepdims=True), onset_vec.var(keepdims=True)]))
+    return np.stack(vecs)
+
+
+def structural_fad(samples: np.ndarray, refs: np.ndarray) -> float:
+    """Frechet distance (FAD) over structural embeddings; lower means closer structure.
+
+    This is a lightweight stand-in for MusicBERT-style embedding FAD when heavy encoders
+    are unavailable on the evaluation machine.
+    """
+    def stats(x):
+        mu = x.mean(axis=0)
+        sigma = np.cov(x, rowvar=False)
+        return mu, sigma
+
+    def frechet(mu1, sigma1, mu2, sigma2):
+        diff = mu1 - mu2
+        # simple trace approximation to avoid sqrt of matrices for speed
+        trace = np.trace(sigma1 + sigma2 - 2 * np.sqrt((sigma1 @ sigma2) + 1e-8))
+        return float(diff @ diff + trace)
+
+    emb_s = structural_embedding(samples)
+    emb_r = structural_embedding(refs)
+    mu_s, sigma_s = stats(emb_s)
+    mu_r, sigma_r = stats(emb_r)
+    return frechet(mu_s, sigma_s, mu_r, sigma_r)
+
+
 def compute_metrics(samples: np.ndarray, refs: np.ndarray, mode: str, gap: Tuple[int, int]) -> Dict:
     """Compute distributional + structural metrics and infill accuracy.
 
@@ -363,246 +606,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-# --- Structure-focused helpers ---
-
-
-def split_bars(tensors: np.ndarray, steps_per_bar: int = 16) -> np.ndarray:
-    """Reshape sequences into [B, bars, steps_per_bar, C] for bar-level analysis."""
-    # tensors: [B, T, C]
-    T = tensors.shape[1]
-    n_bars = T // steps_per_bar
-    trimmed = tensors[:, : n_bars * steps_per_bar]
-    return trimmed.reshape(trimmed.shape[0], n_bars, steps_per_bar, tensors.shape[-1])
-
-
-def bar_pitch_vectors(tensors: np.ndarray) -> np.ndarray:
-    """Bar-level pitch-class vectors; basis for repetition and key proxies."""
-    bars = split_bars(tensors)
-    B, NB, _, C = bars.shape
-    vecs = np.zeros((B, NB, 12), dtype=np.float64)
-    pitches = bars[..., 0]
-    mask = (pitches > 1) & (pitches < 90)
-    for b in range(B):
-        for j in range(NB):
-            pj = pitches[b, j][mask[b, j]]
-            if pj.size:
-                vecs[b, j] = np.bincount(pj % 12, minlength=12)
-    return vecs
-
-
-def self_similarity_score(tensors: np.ndarray) -> float:
-    """Average cosine similarity of consecutive bars (higher = more repetition/structure)."""
-    vecs = bar_pitch_vectors(tensors)
-    sims = []
-    for v in vecs:
-        if v.shape[0] < 2:
-            continue
-        # cosine similarities between consecutive bars (repetition/coherence proxy)
-        a = v[:-1]
-        b = v[1:]
-        denom = (np.linalg.norm(a, axis=1) * np.linalg.norm(b, axis=1) + 1e-8)
-        s = (a * b).sum(axis=1) / denom
-        sims.append(s.mean())
-    if not sims:
-        return float('nan')
-    return float(np.mean(sims))
-
-
-def key_consistency(tensors: np.ndarray) -> Tuple[float, int]:
-    """Dominant pitch class per bar; returns stability score and global mode key."""
-    vecs = bar_pitch_vectors(tensors)
-    keys = np.argmax(vecs, axis=2)  # dominant pitch class per bar
-    cons = []
-    mode_keys = []
-    for ks in keys:
-        values, counts = np.unique(ks, return_counts=True)
-        mode = values[np.argmax(counts)]
-        mode_keys.append(mode)
-        cons.append((ks == mode).mean())
-    if not cons:
-        return float('nan'), -1
-    return float(np.mean(cons)), int(np.bincount(mode_keys, minlength=12).argmax())
-
-
-def bar_level_summaries(tensors: np.ndarray) -> Tuple[float, float]:
-    """Mean pitch variance and onset density per bar; simple structure indicators."""
-    bars = split_bars(tensors)
-    pitches = bars[..., 0]
-    onset = (pitches > 1).astype(np.float32)
-    pitch_var = pitches.astype(np.float32)
-    pitch_var[pitch_var <= 1] = np.nan
-    pitch_var_mean = np.nanmean(np.nanvar(pitch_var, axis=2)) if np.isfinite(pitch_var).any() else float('nan')
-    onset_density = onset.mean(axis=2).mean()
-    return float(pitch_var_mean), float(onset_density)
-
-
-def structural_embedding(tensors: np.ndarray) -> np.ndarray:
-    """Cheap structural embedding: normalized pitch-class histogram + onset stats per sample."""
-    # Cheap structural embedding: bar pitch class histogram + onset density per bar, averaged and flattened
-    bars = split_bars(tensors)
-    B, NB, _, _ = bars.shape
-    vecs = []
-    for b in range(B):
-        pitch_vec = np.zeros(12)
-        onset_vec = []
-        for j in range(NB):
-            pj = bars[b, j, :, 0]
-            mask = (pj > 1) & (pj < 90)
-            pitch_vec += np.bincount(pj[mask] % 12, minlength=12)
-            onset_vec.append(mask.mean())
-        onset_vec = np.array(onset_vec)
-        pitch_vec = pitch_vec / (pitch_vec.sum() + 1e-8)
-        vecs.append(np.concatenate([pitch_vec, onset_vec.mean(keepdims=True), onset_vec.var(keepdims=True)]))
-    return np.stack(vecs)
-
-
-def structural_fad(samples: np.ndarray, refs: np.ndarray) -> float:
-    """Frechet distance (FAD) over structural embeddings; lower means closer structure.
-
-    This is a lightweight stand-in for MusicBERT-style embedding FAD when heavy encoders
-    are unavailable on the evaluation machine.
-    """
-    def stats(x):
-        mu = x.mean(axis=0)
-        sigma = np.cov(x, rowvar=False)
-        return mu, sigma
-
-    def frechet(mu1, sigma1, mu2, sigma2):
-        diff = mu1 - mu2
-        # simple trace approximation to avoid sqrt of matrices for speed
-        trace = np.trace(sigma1 + sigma2 - 2 * np.sqrt((sigma1 @ sigma2) + 1e-8))
-        return float(diff @ diff + trace)
-
-    emb_s = structural_embedding(samples)
-    emb_r = structural_embedding(refs)
-    mu_s, sigma_s = stats(emb_s)
-    mu_r, sigma_r = stats(emb_r)
-    return frechet(mu_s, sigma_s, mu_r, sigma_r)
-
-
-def phrase_level_self_similarity(tensors: np.ndarray, phrase_bars: int = 4) -> float:
-    """Cosine similarity between consecutive phrases (multi-bar chunks) to capture long-range structure.
-    
-    Higher values indicate repeated phrase-level motifs (e.g., verse/chorus structure).
-    """
-    vecs = bar_pitch_vectors(tensors)
-    sims = []
-    
-    for v in vecs:
-        n_bars = v.shape[0]
-        if n_bars < phrase_bars * 2:
-            continue
-        
-        # Aggregate bars into phrases
-        n_phrases = n_bars // phrase_bars
-        phrases = []
-        for p in range(n_phrases):
-            phrase_vec = v[p * phrase_bars: (p + 1) * phrase_bars].sum(axis=0)
-            phrases.append(phrase_vec)
-        
-        phrases = np.array(phrases)
-        if len(phrases) < 2:
-            continue
-        
-        # Consecutive phrase similarity
-        a = phrases[:-1]
-        b = phrases[1:]
-        norms = np.linalg.norm(a, axis=1) * np.linalg.norm(b, axis=1) + 1e-8
-        s = (a * b).sum(axis=1) / norms
-        sims.append(s.mean())
-    
-    return float(np.mean(sims)) if sims else float('nan')
-
-
-def harmonic_flux(tensors: np.ndarray) -> float:
-    """Measure harmonic change rate by tracking pitch-class centroid shifts per bar.
-    
-    Higher flux = more harmonic movement; lower = stable harmony. Typical range 0.2–0.6.
-    """
-    vecs = bar_pitch_vectors(tensors)
-    fluxes = []
-    
-    for v in vecs:
-        if v.shape[0] < 2:
-            continue
-        
-        # Compute centroids (weighted pitch-class mean)
-        centroids = []
-        for bar_vec in v:
-            total = bar_vec.sum()
-            if total > 0:
-                centroid = np.dot(bar_vec, np.arange(12)) / total
-                centroids.append(centroid)
-            else:
-                centroids.append(0.0)
-        
-        centroids = np.array(centroids)
-        if len(centroids) < 2:
-            continue
-        
-        # Flux = average absolute difference between consecutive centroids (normalized)
-        diffs = np.abs(np.diff(centroids))
-        # Normalize by wrapping around octave (12 semitones)
-        diffs = np.minimum(diffs, 12 - diffs)
-        fluxes.append(diffs.mean() / 12.0)  # normalize to [0, 1]
-    
-    return float(np.mean(fluxes)) if fluxes else float('nan')
-
-
-def infill_rhythm_correlation(samples: np.ndarray, gap: Tuple[int, int]) -> float:
-    """Compute correlation of onset density between masked span and surrounding context.
-    
-    Higher correlation suggests better rhythmic continuity between infill and context.
-    """
-    bars = split_bars(samples)
-    steps_per_bar = 16
-    gap_bar_start = gap[0] // steps_per_bar
-    gap_bar_end = gap[1] // steps_per_bar
-    
-    correlations = []
-    for b in range(bars.shape[0]):
-        pitches = bars[b, :, :, 0]
-        onset = (pitches > 1).astype(np.float32).mean(axis=1)  # onset density per bar
-        
-        if gap_bar_start > 0 and gap_bar_end < len(onset):
-            context = np.concatenate([onset[:gap_bar_start], onset[gap_bar_end:]])
-            infill = onset[gap_bar_start:gap_bar_end]
-            
-            if len(context) > 1 and len(infill) > 1:
-                # Pearson correlation between context mean and infill bars
-                context_mean = context.mean()
-                corr = np.corrcoef(infill, np.full_like(infill, context_mean))[0, 1]
-                if np.isfinite(corr):
-                    correlations.append(corr)
-    
-    return float(np.mean(correlations)) if correlations else float('nan')
-
-
-def masked_span_embedding_similarity(refs: np.ndarray, samples: np.ndarray, gap: Tuple[int, int]) -> float:
-    """Cosine similarity of bar pitch vectors between reference and generated masked span.
-    
-    Higher similarity indicates better reconstruction of the masked region's harmonic content.
-    """
-    steps_per_bar = 16
-    gap_bar_start = gap[0] // steps_per_bar
-    gap_bar_end = gap[1] // steps_per_bar
-    
-    ref_vecs = bar_pitch_vectors(refs)
-    sample_vecs = bar_pitch_vectors(samples)
-    
-    similarities = []
-    for b in range(ref_vecs.shape[0]):
-        ref_span = ref_vecs[b, gap_bar_start:gap_bar_end]
-        sample_span = sample_vecs[b, gap_bar_start:gap_bar_end]
-        
-        for i in range(len(ref_span)):
-            r = ref_span[i]
-            s = sample_span[i]
-            norm = np.linalg.norm(r) * np.linalg.norm(s)
-            if norm > 1e-8:
-                sim = (r @ s) / norm
-                similarities.append(sim)
-    
-    return float(np.mean(similarities)) if similarities else float('nan')
