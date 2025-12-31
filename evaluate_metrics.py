@@ -89,6 +89,8 @@ def run_generation(H, sampler, dataset: np.ndarray, n_samples: int, mode: str, g
     refs, full_dataset = get_reference_subset(H, dataset, max(eval_batch_size, n_samples))
     batch_size = H.sampling_batch_size
 
+    log(f"[gen] mode={mode} n_samples={n_samples} batch_size={batch_size} sample_steps={H.sample_steps}")
+
     if mode == "unconditional":
         outs = []
         total = 0
@@ -120,6 +122,7 @@ def run_generation(H, sampler, dataset: np.ndarray, n_samples: int, mode: str, g
 
     refs = refs[:n_samples]
     samples = samples[:n_samples]
+    log(f"[gen] done: samples={samples.shape} refs={refs.shape}")
     return samples, refs
 
 
@@ -444,7 +447,8 @@ def bootstrap_confidence_intervals(samples: np.ndarray, refs: np.ndarray, mode: 
     n_samples = samples.shape[0]
     bootstrap_metrics = []
     
-    for _ in range(n_bootstrap):
+    log_interval = max(1, n_bootstrap // 10)
+    for i in range(n_bootstrap):
         # Resample with replacement
         idx = np.random.choice(n_samples, n_samples, replace=True)
         boot_samples = samples[idx]
@@ -452,6 +456,9 @@ def bootstrap_confidence_intervals(samples: np.ndarray, refs: np.ndarray, mode: 
         
         boot_m = compute_metrics(boot_samples, boot_refs, mode, gap)
         bootstrap_metrics.append(boot_m)
+
+        if (i + 1) % log_interval == 0:
+            log(f"[bootstrap] {i + 1}/{n_bootstrap} completed")
     
     # Compute 95% CIs (2.5th and 97.5th percentiles)
     ci_dict = {}
@@ -554,7 +561,9 @@ def main():
     sampler = get_sampler(H).cuda()
     sampler = load_model(sampler, f"{H.sampler}_ema", H.load_step, H.load_dir)
 
+    log("[main] starting generation")
     samples, refs = run_generation(H, sampler, dataset, args.n_samples, args.mode, gap, args.mask_tracks)
+    log("[main] computing metrics")
     metrics = compute_metrics(samples, refs, args.mode, gap)
 
     out_dir = args.save_dir or H.log_dir
@@ -566,15 +575,15 @@ def main():
     metrics_path = os.path.join(metrics_dir, "metrics.json")
     with open(metrics_path, "w", encoding="utf-8") as f:
         json.dump(metrics, f, indent=2)
-    log(f"Saved metrics to {metrics_path}")
+    log(f"[main] saved metrics to {metrics_path}")
     
     if args.bootstrap_ci:
-        log(f"Computing bootstrap CIs with {args.n_bootstrap} samples...")
+        log(f"[main] computing bootstrap CIs with {args.n_bootstrap} samples")
         ci_dict = bootstrap_confidence_intervals(samples, refs, args.mode, gap, args.n_bootstrap)
         metrics.update(ci_dict)
         with open(metrics_path, "w", encoding="utf-8") as f:
             json.dump(metrics, f, indent=2)
-        log(f"Added bootstrap CIs to {metrics_path}")
+        log(f"[main] added bootstrap CIs to {metrics_path}")
 
     if args.compute_fad:
         fad = structural_fad(samples, refs)
@@ -594,7 +603,7 @@ def main():
         metrics_bar_path = os.path.join(metrics_dir, "metrics_bar.json")
         with open(metrics_bar_path, "w", encoding="utf-8") as f:
             json.dump(metrics_bar, f, indent=2)
-        log(f"Saved bar-aligned masking metrics to {metrics_bar_path}")
+        log(f"[main] saved bar-aligned masking metrics to {metrics_bar_path}")
 
     if args.save_midis:
         midi_dir = os.path.join(metrics_dir, "midis")
@@ -603,7 +612,7 @@ def main():
             # note_seq NoteSequence has .SaveToString; easiest is note_sequence_to_midi_file
             from note_seq import note_sequence_to_midi_file
             note_sequence_to_midi_file(ns, os.path.join(midi_dir, f"sample_{i}.mid"))
-        log(f"Saved MIDI samples to {midi_dir}")
+        log(f"[main] saved MIDI samples to {midi_dir}")
 
 
 if __name__ == "__main__":
