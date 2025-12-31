@@ -6,22 +6,32 @@ import re
 import platform
 import shutil
 
-# Models to train
-models = ["octuple"]
+# Strategies to train
+strategies = [
+    # '1_bar_all',
+    # '2_bar_all',
+    # '1_bar_attribute',
+    # '2_bar_attribute',
+    # 'rand_attribute'
+    'mixed' # Train the unified mixed model
+]
+
+# Base model name
+base_model = "octuple"
 
 # Common arguments
 # OctupleDataset expects a directory containing .npy files
 dataset = "data/processed" 
 bars = "64"
 batch_size = "4"
-tracks = "melody" # Used for log directory naming, even if octuple handles more
+tracks = "melody" # Used for log directory naming
 # Note: If epochs is set (!= None), it overrides train_steps
 epochs = "150"
 train_steps = "100000"
 steps_per_log = "10"
 steps_per_eval = "3000"
 steps_per_sample = "3000"
-steps_per_checkpoint = "500"
+steps_per_checkpoint = "1000"
 
 SCRATCH_DIR_BASE = "/work/scratch/lconconi"
 
@@ -76,9 +86,14 @@ def get_latest_checkpoint(model_name):
                 
     return max_step, log_dir_name
 
-def train_model(model_name):
+def train_model(strategy):
+    # Construct specific model name for this strategy
+    # This ensures unique log directories: log_octuple_1_bar_all_melody_1024
+    model_name = f"{base_model}_{strategy}"
+    
     print(f"==============================================")
-    print(f"Starting training for model: {model_name}")
+    print(f"Starting training for strategy: {strategy}")
+    print(f"Model Name: {model_name}")
     print(f"==============================================")
     
     load_step, log_dir_name = get_latest_checkpoint(model_name)
@@ -98,9 +113,6 @@ def train_model(model_name):
                 print(f"[CLUSTER DETECTED] Created scratch directory: {log_base_dir}")
             except Exception as e:
                 print(f"[CLUSTER ERROR] Failed to create scratch directory: {e}")
-                # Fallback to local logs if scratch fails? 
-                # User asked to use scratch to avoid OOM, so maybe failing is better, 
-                # but let's try to proceed or just let train.py fail if it can't write.
     
     cmd = [
         sys.executable, "train.py",
@@ -109,6 +121,7 @@ def train_model(model_name):
         "--batch_size", batch_size,
         "--tracks", tracks,
         "--model", model_name,
+        "--masking_strategy", strategy, # Pass the strategy
         "--epochs", epochs,
         "--train_steps", train_steps,
         "--steps_per_log", steps_per_log,
@@ -129,13 +142,13 @@ def train_model(model_name):
     
     try:
         subprocess.run(cmd, check=True)
-        print(f"Finished training for model: {model_name}")
+        print(f"Finished training for strategy: {strategy}")
         
         if on_cluster:
             print(f"[CLUSTER DETECTED] Syncing to permanent storage is handled automatically by log_utils.")
 
     except subprocess.CalledProcessError as e:
-        print(f"Failed to train model: {model_name}")
+        print(f"Failed to train strategy: {strategy}")
         print(f"Error: {e}")
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
@@ -143,7 +156,8 @@ def train_model(model_name):
     print("----------------------------------------------")
 
 if __name__ == "__main__":
-    for model in models:
-        train_model(model)
+    for strategy in strategies:
+        train_model(strategy)
 
-    print("All training tasks completed.")
+    print("All strategy training tasks completed.")
+

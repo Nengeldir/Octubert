@@ -9,7 +9,7 @@ from preprocessing import OneHotMelodyConverter, TrioConverter
 
 
 def get_sampler(H):
-    if H.model == 'transformer' or H.model == 'octuple':
+    if H.model == 'transformer' or H.model.startswith('octuple'):
         denoise_fn = Transformer(H).cuda()
     elif H.model == 'hierarch_transformer':
         denoise_fn = HierarchTransformer(H).cuda()
