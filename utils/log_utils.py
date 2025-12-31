@@ -183,10 +183,25 @@ def save_noteseqs(ns, prefix='pre_adv'):
 def samples_2_noteseq(np_samples):
     if np_samples.shape[2] == 3:
         converter = TrioConverter(16)#todo: Hparams, async
+        return converter.from_tensors(np_samples)
+    elif np_samples.shape[2] == 8:
+        from utils.octuple import OctupleEncoding
+        import tempfile
+        import note_seq
+        converter = OctupleEncoding()
+        note_seqs = []
+        for s in np_samples:
+            midi_obj = converter.decode(s)
+            with tempfile.NamedTemporaryFile(suffix='.mid') as tmp:
+                midi_obj.dump(tmp.name)
+                ns = note_seq.midi_to_note_sequence(
+                    open(tmp.name, 'rb').read())
+            note_seqs.append(ns)
+        return note_seqs
     else:
         converter = OneHotMelodyConverter()
         np_samples = np_samples[:, :, 0]
-    return converter.from_tensors(np_samples)
+        return converter.from_tensors(np_samples)
 
 
 def sample_audio(samples):
