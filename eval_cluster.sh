@@ -7,7 +7,7 @@
 
 # Enable module command
 . /etc/profile.d/modules.sh
-module add cuda/12.8
+module add cuda/13.0
 
 # Set up repo directory
 REPO_DIR="${HOME}/symbolic-music-discrete-diffusion-fork"
@@ -21,10 +21,14 @@ source venv/bin/activate
 
 # Install dependencies if not already installed
 pip3 install --upgrade pip 'setuptools>=70.0.0' wheel
-pip3 install torch torchvision torchaudio
+pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu130
 # Install key packages compatible with Python 3.12, skip old pinned versions
 pip3 install --prefer-binary numpy scipy scikit-learn pandas matplotlib jupyter notebook ipywidgets statsmodels
 pip3 install --prefer-binary absl-py addict aiofiles anyio audioread bleach click fastapi filelock huggingface-hub joblib librosa mido nicegui note-seq numba pillow pretty-midi pydub pyfluidsynth pypianoroll python-dotenv python-socketio pyyaml rich soundfile tensorboard transformers uvicorn visdom watchfiles websockets
+
+# Verify CUDA is available
+echo "CUDA available: $(python3 -c 'import torch; print(torch.cuda.is_available())')"
+echo "CUDA device count: $(python3 -c 'import torch; print(torch.cuda.device_count())')"
 
 # Define model configs
 MODEL1_DIR="log_transformer_melody_1024"

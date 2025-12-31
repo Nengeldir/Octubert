@@ -646,7 +646,7 @@ def main():
     log("[main] computing metrics")
     metrics = compute_metrics(samples, refs, args.mode, gap)
 
-    out_dir = args.save_dir or H.log_dir
+    out_dir = args.save_dir or H.load_dir
     if not os.path.isabs(out_dir):
         out_dir = os.path.join("logs", out_dir)
     metrics_dir = os.path.join(out_dir, "metrics")
