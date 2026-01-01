@@ -441,7 +441,7 @@ def structural_fad(samples: np.ndarray, refs: np.ndarray) -> float:
     return frechet(mu_s, sigma_s, mu_r, sigma_r)
 
 
-def compute_metrics(samples: np.ndarray, refs: np.ndarray, mode: str, gap: Tuple[int, int]) -> Dict:
+def compute_metrics(samples: np.ndarray, refs: np.ndarray, mode: str, gap: Tuple[int, int], samples_ns=None, refs_ns=None) -> Dict:
     """Compute distributional + structural metrics and infill accuracy.
 
     JS divergence: distribution match; lower is better.
@@ -450,6 +450,9 @@ def compute_metrics(samples: np.ndarray, refs: np.ndarray, mode: str, gap: Tuple
     Key consistency: tonal stability and agreement.
     Bar summaries: quick view of pitch spread and density (structure proxy).
     Masked token accuracy: exact reconstruction of masked span.
+    
+    Args:
+        samples_ns, refs_ns: Optional precomputed NoteSequences to avoid repeated conversion (for bootstrap speed).
     """
     metrics: Dict[str, float] = {}
 
@@ -461,7 +464,12 @@ def compute_metrics(samples: np.ndarray, refs: np.ndarray, mode: str, gap: Tuple
     dur_r = duration_hist(refs)
     metrics["duration_js"] = js_divergence(dur_s, dur_r)
 
-    cons, var = evaluate_consistency_variance(np_to_ns(refs), np_to_ns(samples))
+    # Use precomputed NoteSequences if provided (bootstrap speedup)
+    if samples_ns is None:
+        samples_ns = np_to_ns(samples)
+    if refs_ns is None:
+        refs_ns = np_to_ns(refs)
+    cons, var = evaluate_consistency_variance(refs_ns, samples_ns)
     metrics["consistency_pitch"] = float(cons[0])
     metrics["consistency_duration"] = float(cons[1])
     metrics["variance_pitch"] = float(var[0])
@@ -517,6 +525,13 @@ def bootstrap_confidence_intervals(samples: np.ndarray, refs: np.ndarray, mode: 
     Returns dict with keys like 'pitch_class_js_ci' containing (lower, upper) bounds.
     """
     n_samples = samples.shape[0]
+    
+    # Precompute NoteSequences once to avoid repeated conversion (huge speedup for octuple)
+    log("[bootstrap] precomputing NoteSequences for consistency/variance metrics...")
+    all_samples_ns = np_to_ns(samples)
+    all_refs_ns = np_to_ns(refs)
+    log(f"[bootstrap] NoteSequence conversion complete; starting {n_bootstrap} iterations")
+    
     bootstrap_metrics = []
     
     log_interval = max(1, n_bootstrap // 10)
@@ -525,8 +540,10 @@ def bootstrap_confidence_intervals(samples: np.ndarray, refs: np.ndarray, mode: 
         idx = np.random.choice(n_samples, n_samples, replace=True)
         boot_samples = samples[idx]
         boot_refs = refs[idx]
+        boot_samples_ns = [all_samples_ns[j] for j in idx]
+        boot_refs_ns = [all_refs_ns[j] for j in idx]
         
-        boot_m = compute_metrics(boot_samples, boot_refs, mode, gap)
+        boot_m = compute_metrics(boot_samples, boot_refs, mode, gap, boot_samples_ns, boot_refs_ns)
         bootstrap_metrics.append(boot_m)
 
         if (i + 1) % log_interval == 0:
@@ -570,6 +587,7 @@ def main():
     parser.add_argument("--ablate_masking", action="store_true", help="Run bar-aligned masking as second eval for infilling")
     parser.add_argument("--bootstrap_ci", action="store_true", help="Compute bootstrap 95%% confidence intervals (slow)")
     parser.add_argument("--n_bootstrap", type=int, default=1000, help="Number of bootstrap samples for CIs")
+    parser.add_argument("--bootstrap_only", action="store_true", help="Skip generation; load existing samples/refs and compute bootstrap CIs only")
     parser.add_argument("--split_path", type=str, default="data/splits/pop909_split.json")
     parser.add_argument("--split_partition", choices=["train", "val", "test"], default="test")
     parser.add_argument("--processed_dir", type=str, default="data/processed")
@@ -635,16 +653,38 @@ def main():
 
     log(f"[main] dataset loaded: {dataset.shape}")
 
-    log("[main] building sampler")
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    sampler = get_sampler(H).to(device)
-    log("[main] loading weights")
-    sampler = load_model(sampler, f"{H.sampler}_ema", H.load_step, H.load_dir)
+    if args.bootstrap_only:
+        # Load cached samples/refs from previous run
+        out_dir = args.save_dir or H.load_dir
+        if not os.path.isabs(out_dir):
+            out_dir = os.path.join("logs", out_dir)
+        cache_dir = os.path.join(out_dir, "cache")
+        samples_path = os.path.join(cache_dir, "samples.npy")
+        refs_path = os.path.join(cache_dir, "refs.npy")
+        if not os.path.exists(samples_path) or not os.path.exists(refs_path):
+            raise FileNotFoundError(f"Cached samples/refs not found in {cache_dir}. Run without --bootstrap_only first.")
+        samples = np.load(samples_path)
+        refs = np.load(refs_path)
+        log(f"[main] loaded cached samples {samples.shape} and refs {refs.shape} from {cache_dir}")
+        metrics_path = os.path.join(out_dir, "metrics", "metrics.json")
+        if os.path.exists(metrics_path):
+            with open(metrics_path, "r", encoding="utf-8") as f:
+                metrics = json.load(f)
+            log(f"[main] loaded existing metrics from {metrics_path}")
+        else:
+            log("[main] no existing metrics.json; will compute fresh metrics")
+            metrics = compute_metrics(samples, refs, args.mode, gap)
+    else:
+        log("[main] building sampler")
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        sampler = get_sampler(H).to(device)
+        log("[main] loading weights")
+        sampler = load_model(sampler, f"{H.sampler}_ema", H.load_step, H.load_dir)
 
-    log("[main] starting generation")
-    samples, refs = run_generation(H, sampler, dataset, args.n_samples, args.mode, gap, args.mask_tracks)
-    log("[main] computing metrics")
-    metrics = compute_metrics(samples, refs, args.mode, gap)
+        log("[main] starting generation")
+        samples, refs = run_generation(H, sampler, dataset, args.n_samples, args.mode, gap, args.mask_tracks)
+        log("[main] computing metrics")
+        metrics = compute_metrics(samples, refs, args.mode, gap)
 
     out_dir = args.save_dir or H.load_dir
     if not os.path.isabs(out_dir):
@@ -653,6 +693,13 @@ def main():
     os.makedirs(metrics_dir, exist_ok=True)
 
     metrics_path = os.path.join(metrics_dir, "metrics.json")
+    if not args.bootstrap_only:
+        # Cache samples/refs for potential bootstrap_only reruns
+        cache_dir = os.path.join(out_dir, "cache")
+        os.makedirs(cache_dir, exist_ok=True)
+        np.save(os.path.join(cache_dir, "samples.npy"), samples)
+        np.save(os.path.join(cache_dir, "refs.npy"), refs)
+        log(f"[main] cached samples/refs to {cache_dir}")
     with open(metrics_path, "w", encoding="utf-8") as f:
         json.dump(metrics, f, indent=2)
     log(f"[main] saved metrics to {metrics_path}")

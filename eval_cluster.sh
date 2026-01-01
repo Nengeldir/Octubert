@@ -44,35 +44,35 @@ MODEL3_DIR="log_octuple_1_bar_all_1024"
 MODEL3_STEP=32000
 
 # Run all three evaluations sequentially
-echo "Running Baseline A (Event + Random): ${MODEL1_DIR}"
-python3 evaluate_metrics.py \
-    --mode unconditional \
-    --n_samples 64 \
-    --load_dir "${MODEL1_DIR}" \
-    --load_step ${MODEL1_STEP} \
-    --model "transformer" \
-    --tracks melody \
-    --bars 64 \
-    --no_split \
-    --bootstrap_ci \
-    --n_bootstrap 1000 \
-    --save_midis \
-    --seed 123
+# echo "Running Baseline A (Event + Random): ${MODEL1_DIR}"
+# python3 evaluate_metrics.py -u \
+#     --mode unconditional \
+#     --n_samples 64 \
+#     --load_dir "${MODEL1_DIR}" \
+#     --load_step ${MODEL1_STEP} \
+#     --model "transformer" \
+#     --tracks melody \
+#     --bars 64 \
+#     --no_split \
+#     --bootstrap_ci \
+#     --n_bootstrap 1000 \
+#     --save_midis \
+#     --seed 123
 
-echo "Running Baseline B (Octuple + Random): ${MODEL2_DIR}"
-python3 evaluate_metrics.py \
-    --mode unconditional \
-    --n_samples 64 \
-    --load_dir "${MODEL2_DIR}" \
-    --load_step ${MODEL2_STEP} \
-    --model "octuple" \
-    --tracks melody \
-    --bars 64 \
-    --no_split \
-    --bootstrap_ci \
-    --n_bootstrap 1000 \
-    --save_midis \
-    --seed 123
+# echo "Running Baseline B (Octuple + Random): ${MODEL2_DIR}"
+# python3 evaluate_metrics.py \
+#     --mode unconditional \
+#     --n_samples 64 \
+#     --load_dir "${MODEL2_DIR}" \
+#     --load_step ${MODEL2_STEP} \
+#     --model "octuple" \
+#     --tracks melody \
+#     --bars 64 \
+#     --no_split \
+#     --bootstrap_ci \
+#     --n_bootstrap 1000 \
+#     --save_midis \
+#     --seed 123
 
 echo "Running Proposed (Octuple + Bar-Aligned): ${MODEL3_DIR}"
 python3 evaluate_metrics.py \
