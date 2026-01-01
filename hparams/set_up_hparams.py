@@ -1,5 +1,5 @@
 import argparse
-from .default_hparams import HparamsAbsorbing, HparamsAbsorbingConv, HparamsHierarchTransformer, HparamsUTransformer
+from .default_hparams import HparamsAbsorbing, HparamsAbsorbingConv, HparamsHierarchTransformer, HparamsUTransformer, HparamsOctuple
 
 
 def add_common_args(parser):
@@ -13,6 +13,8 @@ def add_common_args(parser):
     parser.add_argument("--dataset_path", type=str, default='data/POP909_melody.npy')
     parser.add_argument("--log_base_dir", type=str, default=None)
     parser.add_argument("--port", type=int, default=8097)
+    parser.add_argument("--masking_strategy", type=str, default=None)
+
 
 
 def add_sample_args(parser):
@@ -37,6 +39,7 @@ def add_train_args(parser):
     parser.add_argument("--steps_per_checkpoint", type=int, default=20)
     parser.add_argument("--train_steps", type=int, default=1000)
     parser.add_argument("--show_samples", type=int, default=32)
+
 
 
 def add_eval_args(parser, num_evals=5):
@@ -69,6 +72,8 @@ def get_sampler_hparams(mode):
         H = HparamsHierarchTransformer(parser_args)
     elif parser_args.model == 'U_transformer':
         H = HparamsUTransformer(parser_args)
+    elif parser_args.model.startswith('octuple'):
+        H = HparamsOctuple(parser_args)
     else:
         parser_args.model = 'conv_transformer'
         H = HparamsAbsorbingConv(parser_args)

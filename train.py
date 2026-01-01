@@ -8,19 +8,23 @@ from tqdm import tqdm
 
 from hparams import get_sampler_hparams
 from utils import *
+from utils.data_utils import OctupleDataset
 
 from utils.sampler_utils import get_samples
 from utils.train_utils import EMA, optim_warmup, augment_note_tensor
 
 
 def main(H, vis):
-    midi_data = np.load(H.dataset_path, allow_pickle=True)
-    midi_data = SubseqSampler(midi_data, H.NOTES)
+    if os.path.isdir(H.dataset_path):
+        midi_data = OctupleDataset(H.dataset_path, H.NOTES)
+    else:
+        midi_data = np.load(H.dataset_path, allow_pickle=True)
+        midi_data = SubseqSampler(midi_data, H.NOTES)
 
     val_idx = int(len(midi_data) * H.validation_set_size)
-    train_loader = torch.utils.data.DataLoader(midi_data[val_idx:], batch_size=H.batch_size, shuffle=True,
+    train_loader = torch.utils.data.DataLoader(torch.utils.data.Subset(midi_data, range(val_idx, len(midi_data))), batch_size=H.batch_size, shuffle=True,
                                                pin_memory=True, num_workers=2)
-    val_loader = torch.utils.data.DataLoader(midi_data[:val_idx], batch_size=H.batch_size)
+    val_loader = torch.utils.data.DataLoader(torch.utils.data.Subset(midi_data, range(val_idx)), batch_size=H.batch_size)
 
     log(f'Total train batches: {len(train_loader)}, eval: {len(val_loader)}')
     if H.epochs:

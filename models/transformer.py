@@ -104,7 +104,7 @@ class Transformer(nn.Module):
             self.vocab_size = H.codebook_size
 
         self.tok_emb = nn.ModuleList([nn.Embedding(vs, self.n_embd) for vs in self.vocab_size])
-        emb_in_dim =  self.n_embd * (1 if H.tracks == 'melody' else 3)
+        emb_in_dim = self.n_embd * len(self.codebook_size)
         self.emb_red = nn.Linear(emb_in_dim,  self.n_embd)
         self.pos_emb = nn.Parameter(torch.zeros(1, self.block_size, self.n_embd))
         self.start_tok = nn.Parameter(torch.zeros(1, 1, self.n_embd))

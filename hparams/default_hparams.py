@@ -89,3 +89,13 @@ class HparamsUTransformer(HparamsAbsorbing):
         self.bert_n_emb = 512
         self.conv_width = 4
         self.augment = False
+
+
+class HparamsOctuple(HparamsAbsorbing):
+    def __init__(self, parser):
+        super().__init__(parser)
+        
+        self.codebook_size = (2048, 128, 129, 256, 128, 32, 256, 49)
+        self.latent_shape = (self.NOTES, 8)
+        self.augment = False # Disable augmentation for Octuple initially
+
