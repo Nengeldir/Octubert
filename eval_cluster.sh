@@ -45,7 +45,7 @@ MODEL3_STEP=32000
 
 # Run all three evaluations sequentially
 # echo "Running Baseline A (Event + Random): ${MODEL1_DIR}"
-# python3 evaluate_metrics.py -u \
+# python3 -u evaluate_metrics.py -u \
 #     --mode unconditional \
 #     --n_samples 64 \
 #     --load_dir "${MODEL1_DIR}" \
@@ -60,7 +60,7 @@ MODEL3_STEP=32000
 #     --seed 123
 
 # echo "Running Baseline B (Octuple + Random): ${MODEL2_DIR}"
-# python3 evaluate_metrics.py \
+# python3 -u evaluate_metrics.py \
 #     --mode unconditional \
 #     --n_samples 64 \
 #     --load_dir "${MODEL2_DIR}" \
@@ -75,7 +75,7 @@ MODEL3_STEP=32000
 #     --seed 123
 
 echo "Running Proposed (Octuple + Bar-Aligned): ${MODEL3_DIR}"
-python3 evaluate_metrics.py \
+python3 -u evaluate_metrics.py \
     --mode unconditional \
     --n_samples 64 \
     --load_dir "${MODEL3_DIR}" \
