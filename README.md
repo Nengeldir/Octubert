@@ -1,70 +1,77 @@
-# SCHmUBERT
+# Octubert
 
-implementation of absorbing state diffusion model from https://github.com/samb-t/unleashing-transformers
+**Octubert** is an advanced symbolic music generation model based on the [absorbing state diffusion framework](https://github.com/samb-t/unleashing-transformers).
 
-## Samples
+It is an evolution of the original **SCHmUBERT** model, introducing **Octuple MIDI Encoding** and **Natural Partial Masking** to enable high-fidelity musical control and inpainting.
 
-Samples in MIDI format can be found in the samples folder.
-[You can also explore them in your browser](https://anonymous.4open.science/w/symbolic-music-discrete-diffusion-DC51/)
-(open in new tab if page not found)
+## Additions
+
+### 1. Octuple MIDI Encoding
+Standard MIDI representations often treat note attributes (like pitch and duration) as separate, loosely coupled tokens. Octubert uses an **Octuple Token** representation (inspired by MusicBERT), where each musical event is encoded as a single, unified 8-tuple:
+*   `(Bar, Position, Program, Pitch, Duration, Velocity, TimeSignature, Tempo)`
+
+This tightly coupled representation allows the transformer to learn the intricate relationships between musical attributes—understanding that a specific pitch often correlates with a certain duration or velocity in a given rhythmic context.
+
+### 2. Natural Partial Masking
+Traditional masked language models (like BERT) mask entire tokens. Because our tokens are Octuples, masking the whole token would hide all information about a note.
+
+**Octubert introduces Natural Partial Masking**, which allows us to mask *specific attributes* of a token while keeping others visible.
+*   **Musical Inpainting**: We can mask just the *Pitch* of a phrase while keeping the *Rhythm* (Duration/Position) intact, effectively asking the model to "re-harmonize" a rhythm.
+*   **Flexible Strategies**:
+    *   `rand_attribute`: Randomly masks attributes (e.g., Velocity or Tempo) to learn their distributions.
+    *   `1_bar_all`: Masks all attributes for a full bar to learn structural coherence.
+    *   `mixed`: A robust curriculum that combines disparate masking strategies for generalized learning.
+
+### 3. Structural Continuity
+Built-in support for **Music Infilling** allows you to seamlessly generate bridges or fill gaps in existing MIDI files, maintaining the tempo and style of the surrounding context.
+
+---
 
 ## Installation
-I run my experiments in Python 3.10, with all dependencies managed by Conda.
 
-```conda env create -f env.yml```
+The environment is managed via Conda.
 
-Note that for all experiments, a soundfont-file called 'soundfont.sf2' (not included) must be located in the root-directory of the project.
+```bash
+conda env create -f env.yml
+conda activate symbolic-music-discrete-diffusion
+```
 
-## Prepare Dataset
+*Note: A soundfont file `soundfont.sf2` (not included) must be placed in the project root for audio rendering functionalities.*
 
-I use the [Lakh MIDI Dataset](https://colinraffel.com/projects/lmd/) to train the models.
-For loading, preprocessing and extracting melodies and trios from the MIDI files, I adapted the [pipelines magenta implemented for their MusciVAE](https://github.com/magenta/magenta/tree/main/magenta/models/music_vae).
-To prepare the dataset run:
+## Usage
 
-```python prepare_data.py --root_dir=/path/to/lmd_full --target data/lakh_trio.npy --mode trio --bars 64```
+### 1. Data Preparation
+Octubert requires valid Octuple-encoded data. We recommend the POP909 dataset.
 
-## Train
+```bash
+python prepare_data.py --root_dir data/POP909 --target data/POP909_melody.npy --mode melody --bars 64
+```
+*This uses our improved pre-processing pipeline that prevents data fragmentation by handling silences and tempo changes intelligently.*
 
-I use [visdom](https://github.com/fossasia/visdom) to log the training progress and periodically show samples.
+### 2. Training
+To train an Octubert model with the **Mixed** masking strategy (recommended):
 
-To train the model, start visdom and run for example:
+```bash
+python train.py --dataset data/POP909_melody.npy --bars 64 --batch_size 16 --tracks melody --model octuple_mixed --masking_strategy mixed
+```
 
-```python train.py --dataset data/lakh_trio.npy --bars 64 --batch_size 64 --tracks trio --model conv_transformer```
+### 3. Infilling (The "Magic" Step)
+To take an existing song (`input.mid`) and fill in a gap (e.g., bars 16-32) with new music:
 
-So far, I got the best results with the conv_transformer model with one 1DConvolutional layer with a width of 4.
-Pay attention to the ```steps_per_eval``` param, which is set to 10000 per default.
-The evaluation step is more computationally expensive than training for 10000 steps, which is why you might want to increase this value if you do not need that many evaluations.
+```bash
+python infill.py --load_dir logs/log_octuple_mixed_melody_1024 --input_midi input.mid --start_bar 16 --end_bar 32
+```
 
+### 4. Interactive GUI
+Launch the web-based GUI for interactive sampling and visualization:
 
-## Evaluate
+```bash
+python sample.py --load_step 140000 --bars 64 --tracks trio --model conv_transformer
+```
 
-To evaluate the framewise self-similarity metric on the samples generated by a model, run:
+---
 
-```python evaluate.py --mode unconditional|infilling|self```
-
-## Sample
-![](https://github.com/plassma/symbolic-music-discrete-diffusion/blob/9a78a0232d6391a29eb907bd7f876cd3bce2a697/SCHmUBERT_GUI.gif)
-
-For sampling, I ~implemented~ hacked a rudimentary GUI using [nicegui](https://github.com/zauberzeug/nicegui).
-
-```python sample.py --load_step 140000 --bars 64 --tracks trio --model conv_transformer```
-
-The GUI supports:
-  * visualizing samples (melody=red, bass=blue, drums=black), y position indicated pitch height, special pitch values: 0: pause, 1: note off, 90: mask
-  * adaption of sample steps (Slider in Upload Expansion area)
-  * diffuse from left to right ('=>') or vice versa ('<=')
-  * copy from left to right ('>') or vice versa, only mask values are overwritten
-  * sampling unconditionally (select 'A' in the central toggle to diffuse **A**ll (batch of 8) instead of the **S**elected sample)
-  * uploading midi or musicxml - pieces for conditioning
-  * masking whole tracks LM = Left Melody, RD = Right Drums, ....
-  * masking area selected with mouse (mask button at the bottom)
-  * playing with cursor indicating exact position in left and right visualization
-
-
-
-## Model Weights
-
-Model weights for the Conv_Transformer EMA model trained on the Lakh-MIDI Dataset can be obtained [here](https://drive.google.com/file/d/1-MBFvSWiJvDkdTL9WDMA4I1ZWM36PVrw/view?usp=share_link).
-Extract the 'logs' folder to the project root, and set ```load_step, model, ...``` accordingly (250000, conv_transformer, ...).
-
-
+## Attribution
+This project is built upon the foundational work of **SCHmUBERT**.
+*   Original implementation: [SCHmUBERT](https://github.com/plassma/symbolic-music-discrete-diffusion) (based on [unleashing-transformers](https://github.com/samb-t/unleashing-transformers)).
+*   Octuple MIDI implementation adapted from MusicBERT.
