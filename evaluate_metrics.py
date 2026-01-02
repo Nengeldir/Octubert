@@ -100,27 +100,27 @@ def apply_octuple_mask_np(x_0: np.ndarray, strategy: str) -> np.ndarray:
         target_attr = np.array([3, 4, 5, 7])
         for i in range(b):
             bar_mask = bar_indices[i] == target_bars[i]
-            mask[i, bar_mask[:, None], target_attr] = True
+                mask[i, bar_mask, :][:, target_attr] = True
     elif strategy == '2_bar_all':
         r1, r2 = sample_bars(1), sample_bars(1)
         target_attr = np.array([3, 4, 5, 7])
         for i in range(b):
             bar_mask = (bar_indices[i] == r1[i]) | (bar_indices[i] == r2[i])
-            mask[i, bar_mask[:, None], target_attr] = True
+                mask[i, bar_mask, :][:, target_attr] = True
     elif strategy == '1_bar_attribute':
         target_bars = sample_bars(1)
         avail_attrs = np.array([3, 4, 5, 7])
         sel_attr = avail_attrs[(rng.random(b) * 4).astype(int)]
         for i in range(b):
             bar_mask = bar_indices[i] == target_bars[i]
-            mask[i, bar_mask[:, None], sel_attr[i]] = True
+                mask[i, bar_mask, sel_attr[i]] = True
     elif strategy == '2_bar_attribute':
         r1, r2 = sample_bars(1), sample_bars(1)
         avail_attrs = np.array([3, 4, 5, 7])
         sel_attr = avail_attrs[(rng.random(b) * 4).astype(int)]
         for i in range(b):
             bar_mask = (bar_indices[i] == r1[i]) | (bar_indices[i] == r2[i])
-            mask[i, bar_mask[:, None], sel_attr[i]] = True
+                mask[i, bar_mask, sel_attr[i]] = True
     elif strategy == 'rand_attribute':
         avail_attrs = np.array([3, 4, 5, 7])
         sel_attr = avail_attrs[(rng.random(b) * 4).astype(int)]
