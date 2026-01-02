@@ -345,9 +345,9 @@ class AbsorbingDiffusion(Sampler):
         device = self.mask_id.device
         b = self.sampling_batch_size if B is None else B
         if x_T is None:
-            x_T = torch.ones((b, *self.shape), device=device).long() * self.mask_id
+            x_T = torch.ones((b, *self.shape), device=device, dtype=torch.long) * self.mask_id
         else:
-            x_T = x_T.to(device)
+            x_T = x_T.to(device=device, dtype=torch.long)
         b = x_T.shape[0]
         unmasked = torch.zeros_like(x_T, device=device, dtype=torch.bool)
         unmasked[x_T != self.mask_id] = True

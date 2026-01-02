@@ -35,7 +35,8 @@ def get_samples(sampler, sample_steps, x_T=None, temp=1.0, b=None, progress_hand
     sampler.eval()
 
     if x_T is not None and not torch.is_tensor(x_T):
-        x_T = torch.tensor(x_T).to(next(sampler.parameters()).device)
+        device = next(sampler.parameters()).device
+        x_T = torch.as_tensor(x_T, device=device, dtype=torch.long)
 
     result = sampler.sample(sample_steps=sample_steps, x_T=x_T, temp=temp, B=b, progress_handler=progress_handler)
     return result.cpu().numpy()
