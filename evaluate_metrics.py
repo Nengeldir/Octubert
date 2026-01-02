@@ -168,7 +168,15 @@ def run_generation(H, sampler, dataset: np.ndarray, n_samples: int, mode: str, g
             for t in mask_tracks:
                 samples[:, gap[0]:gap[1], t] = H.codebook_size[t]
         else:
-            samples[:, gap[0]:gap[1]] = np.array(H.codebook_size)
+            # For non-octuple models: mask the gap span with codebook_size
+            # codebook_size is a tuple like (90,) for melody or (90, 90, 512) for trio
+            if len(H.codebook_size) == 1:
+                # Single-channel (melody): fill gap with codebook_size[0]
+                samples[:, gap[0]:gap[1]] = H.codebook_size[0]
+            else:
+                # Multi-channel (trio): fill each channel with its codebook_size
+                for c in range(len(H.codebook_size)):
+                    samples[:, gap[0]:gap[1], c] = H.codebook_size[c]
         outs = []
         total = 0
         while total < n_samples:
@@ -649,7 +657,21 @@ def main():
         split_ids = load_split_ids(args.split_path, args.split_partition)
         dataset = load_processed_subset(args.processed_dir, split_ids)
     else:
-        dataset = np.load(H.dataset_path, allow_pickle=True)
+        # For octuple models, try to load from processed dir if it exists; fall back to stacked npy
+        if H.model == 'octuple':
+            log(f"[main] octuple model detected; attempting to load from processed_dir={args.processed_dir}")
+            try:
+                # Load all available processed files
+                from pathlib import Path
+                processed_files = sorted(Path(args.processed_dir).glob('*.npy'))
+                all_ids = [f.stem for f in processed_files]  # e.g., '001', '002', ...
+                dataset = load_processed_subset(args.processed_dir, all_ids)
+                log(f"[main] loaded {len(all_ids)} octuple files from processed_dir")
+            except Exception as e:
+                log(f"[main] failed to load from processed_dir: {e}; falling back to {H.dataset_path}")
+                dataset = np.load(H.dataset_path, allow_pickle=True)
+        else:
+            dataset = np.load(H.dataset_path, allow_pickle=True)
 
     log(f"[main] dataset loaded: {dataset.shape}")
 
