@@ -368,11 +368,15 @@ def infill_rhythm_correlation(samples: np.ndarray, gap: Tuple[int, int]) -> floa
             infill = onset[gap_bar_start:gap_bar_end]
             
             if len(context) > 1 and len(infill) > 1:
-                # Pearson correlation between context mean and infill bars
-                context_mean = context.mean()
-                corr = np.corrcoef(infill, np.full_like(infill, context_mean))[0, 1]
-                if np.isfinite(corr):
-                    correlations.append(corr)
+                # Correlate infill bars with the first |infill| context bars for rhythmic continuity
+                ctx = context[:len(infill)]
+                if ctx.shape[0] == infill.shape[0]:
+                    infill_std = np.std(infill)
+                    ctx_std = np.std(ctx)
+                    if infill_std > 0 and ctx_std > 0:
+                        corr = np.corrcoef(infill, ctx)[0, 1]
+                        if np.isfinite(corr):
+                            correlations.append(corr)
     
     return float(np.mean(correlations)) if correlations else float('nan')
 
