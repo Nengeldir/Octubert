@@ -95,6 +95,15 @@ def apply_octuple_mask_np(x_0: np.ndarray, strategy: str) -> np.ndarray:
     def sample_bars(count):
         return (rng.random(b) * (max_bars.astype(np.float64) + 1)).astype(int)
 
+    if strategy == 'mixed':
+        strategy = rng.choice([
+            '1_bar_all',
+            '2_bar_all',
+            '1_bar_attribute',
+            '2_bar_attribute',
+            'rand_attribute'
+        ])
+
     if strategy == '1_bar_all':
         target_bars = sample_bars(1)
         target_attr = np.array([3, 4, 5, 7])

@@ -57,59 +57,59 @@ SPLIT_PATH="data/splits/pop909_split.json"
 SPLIT_PARTITION="test"
 PROCESSED_DIR="data/processed"
 
-# Run all four infilling evaluations sequentially
-echo "Running Infilling - Transformer Baseline: ${MODEL1_DIR}"
-python3 -u evaluate_metrics.py \
-    --mode infilling \
-    --n_samples ${N_SAMPLES} \
-    --sample_steps ${SAMPLE_STEPS} \
-    --load_dir "${MODEL1_DIR}" \
-    --load_step ${MODEL1_STEP} \
-    --model "transformer" \
-    --tracks melody \
-    --bars 64 \
-    --no-split \
-    --gap_start ${GAP_START} \
-    --gap_end ${GAP_END} \
-    --save_midis \
-    --seed ${SEED}
+# # Run all four infilling evaluations sequentially
+# echo "Running Infilling - Transformer Baseline: ${MODEL1_DIR}"
+# python3 -u evaluate_metrics.py \
+#     --mode infilling \
+#     --n_samples ${N_SAMPLES} \
+#     --sample_steps ${SAMPLE_STEPS} \
+#     --load_dir "${MODEL1_DIR}" \
+#     --load_step ${MODEL1_STEP} \
+#     --model "transformer" \
+#     --tracks melody \
+#     --bars 64 \
+#     --no-split \
+#     --gap_start ${GAP_START} \
+#     --gap_end ${GAP_END} \
+#     --save_midis \
+#     --seed ${SEED}
 
-echo "Running Infilling - Octuple Baseline (Random): ${MODEL2_DIR}"
-python3 -u evaluate_metrics.py \
-    --mode infilling \
-    --n_samples ${N_SAMPLES} \
-    --sample_steps ${SAMPLE_STEPS} \
-    --load_dir "${MODEL2_DIR}" \
-    --load_step ${MODEL2_STEP} \
-    --model "octuple" \
-    --tracks melody \
-    --bars 64 \
-    --split_path "${SPLIT_PATH}" \
-    --split_partition "${SPLIT_PARTITION}" \
-    --processed_dir "${PROCESSED_DIR}" \
-    --gap_start ${GAP_START} \
-    --gap_end ${GAP_END} \
-    --save_midis \
-    --seed ${SEED}
+# echo "Running Infilling - Octuple Baseline (Random): ${MODEL2_DIR}"
+# python3 -u evaluate_metrics.py \
+#     --mode infilling \
+#     --n_samples ${N_SAMPLES} \
+#     --sample_steps ${SAMPLE_STEPS} \
+#     --load_dir "${MODEL2_DIR}" \
+#     --load_step ${MODEL2_STEP} \
+#     --model "octuple" \
+#     --tracks melody \
+#     --bars 64 \
+#     --split_path "${SPLIT_PATH}" \
+#     --split_partition "${SPLIT_PARTITION}" \
+#     --processed_dir "${PROCESSED_DIR}" \
+#     --gap_start ${GAP_START} \
+#     --gap_end ${GAP_END} \
+#     --save_midis \
+#     --seed ${SEED}
 
-echo "Running Infilling - Octuple + 1_bar_all Masking: ${MODEL3_DIR}"
-python3 -u evaluate_metrics.py \
-    --mode infilling \
-    --n_samples ${N_SAMPLES} \
-    --sample_steps ${SAMPLE_STEPS} \
-    --load_dir "${MODEL3_DIR}" \
-    --load_step ${MODEL3_STEP} \
-    --model "octuple" \
-    --tracks melody \
-    --bars 64 \
-    --split_path "${SPLIT_PATH}" \
-    --split_partition "${SPLIT_PARTITION}" \
-    --processed_dir "${PROCESSED_DIR}" \
-    --masking_strategy "1_bar_all" \
-    --gap_start ${GAP_START} \
-    --gap_end ${GAP_END} \
-    --save_midis \
-    --seed ${SEED}
+# echo "Running Infilling - Octuple + 1_bar_all Masking: ${MODEL3_DIR}"
+# python3 -u evaluate_metrics.py \
+#     --mode infilling \
+#     --n_samples ${N_SAMPLES} \
+#     --sample_steps ${SAMPLE_STEPS} \
+#     --load_dir "${MODEL3_DIR}" \
+#     --load_step ${MODEL3_STEP} \
+#     --model "octuple" \
+#     --tracks melody \
+#     --bars 64 \
+#     --split_path "${SPLIT_PATH}" \
+#     --split_partition "${SPLIT_PARTITION}" \
+#     --processed_dir "${PROCESSED_DIR}" \
+#     --masking_strategy "1_bar_all" \
+#     --gap_start ${GAP_START} \
+#     --gap_end ${GAP_END} \
+#     --save_midis \
+#     --seed ${SEED}
 
 echo "Running Infilling - Octuple + Mixed Masking: ${MODEL4_DIR}"
 python3 -u evaluate_metrics.py \
