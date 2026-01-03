@@ -8,7 +8,7 @@
 #SBATCH --gpus=1
 
 # Initialize environment
-. /home/lconconi/jupyter/bin/activate
+. /home/lziltener/jupyter/bin/activate
 nvidia-smi
 echo "Starting MusicBERT diffusion test job on $HOSTNAME"
 echo "Date: $(date)"
