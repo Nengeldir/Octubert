@@ -9,6 +9,7 @@
 
 # Initialize environment
 . /home/lziltener/jupyter/bin/activate
+pip install -r requirements.txt
 nvidia-smi
 echo "Starting MusicBERT diffusion test job on $HOSTNAME"
 echo "Date: $(date)"
