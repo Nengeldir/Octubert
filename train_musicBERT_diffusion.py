@@ -15,11 +15,11 @@ bars = "64"
 batch_size = "4"
 tracks = "melody" # Used for log directory naming, even if octuple handles more
 # Note: If epochs is set (!= None), it overrides train_steps
-# epochs = "150"
+epochs = "1"                    ¦# 150
 train_steps = "100"          # 100000
 steps_per_log = "10"            # 10
 steps_per_eval = "50"         # 3000
-steps_per_sample = "100"       # 3000
+steps_per_sample = "1000"   # 3000
 steps_per_checkpoint = "100"    # 500
 lr = "0.0001"                   # 0.0001
 
@@ -109,7 +109,7 @@ def train_model(model_name):
         "--batch_size", batch_size,
         "--tracks", tracks,
         "--model", model_name,
-        "--epochs", epochs,
+        # "--epochs", epochs,
         "--train_steps", train_steps,
         "--steps_per_log", steps_per_log,
         "--steps_per_eval", steps_per_eval,
