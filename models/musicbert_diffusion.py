@@ -42,11 +42,13 @@ class MusicBERTDiffusion(nn.Module):
             print(f"Loading pretrained MusicBERT weights from {weights_path}")
             state_dict = torch.load(weights_path, map_location='cpu')
             
-            # We use strict=False because vocab_sizes mismatch means 
-            # element_embeddings and classifiers will have different shapes
-            missing, unexpected = self.musicbert.load_state_dict(state_dict, strict=False)
+            # Filter out keys with shape mismatches (embeddings and classifiers)
+            # PyTorch's strict=False does not ignore shape mismatches, so we must remove them manually.
+            filtered_state_dict = {k: v for k, v in state_dict.items() if not (k.startswith('element_embeddings') or k.startswith('classifiers'))}
+            
+            missing, unexpected = self.musicbert.load_state_dict(filtered_state_dict, strict=False)
             print(f"Missing keys (expected due to vocab change): {missing}")
-            print(f"Unexpected keys: {unexpected}")
+            # print(f"Unexpected keys: {unexpected}")
         else:
             print(f"WARNING: Pretrained weights not found at {weights_path}")
 

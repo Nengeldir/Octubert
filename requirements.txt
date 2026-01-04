@@ -3,7 +3,7 @@
 torch
 torchvision
 torchaudio
-numpy==1.23.1
+numpy
 pandas
 scipy
 scikit-learn
@@ -31,7 +31,7 @@ mido
 nicegui
 note-seq
 numba
-pillow==9.2.0
+pillow
 pretty-midi
 pydub
 pyfluidsynth
@@ -42,7 +42,7 @@ pyyaml
 rich
 soundfile
 tensorboard-plugin-wit
-transformers==4.24.0
+transformers
 uvicorn
 visdom
 watchfiles
