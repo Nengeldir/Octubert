@@ -18,8 +18,15 @@ class MusicBERTDiffusion(nn.Module):
         # Configuration matching the pretrained MusicBERT
         # We use H.codebook_size for the new embeddings/classifiers
         # But we use the structural params from the pretrained model
+        
+        # CRITICAL FIX: Add +1 to vocab sizes to account for the MASK token.
+        # The AbsorbingDiffusion sampler uses H.codebook_size[i] as the mask token index.
+        # So if codebook_size is N, the tokens are 0..N-1, and mask is N.
+        # The embedding layer must accept indices up to N, so size must be N+1.
+        vocab_sizes = [s + 1 for s in H.codebook_size]
+
         self.config = MusicBERTConfig(
-            vocab_sizes=H.codebook_size, # New vocab sizes
+            vocab_sizes=vocab_sizes, # New vocab sizes with mask token support
             element_embedding_size=512,
             hidden_size=512,
             num_layers=4,
