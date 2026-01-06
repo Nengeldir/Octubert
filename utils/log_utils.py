@@ -31,7 +31,7 @@ def start_training_log(hparams):
 
 
 
-SCRATCH_DIR_BASE = "/work/scratch/lconconi"
+SCRATCH_DIR_BASE = "/work/scratch/lconconi"    # swap lconconi TODO
 # Determine project root: utils/log_utils.py -> project_root/utils/log_utils.py -> project_root
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HOME_LOGS_DIR = os.path.join(PROJECT_ROOT, "logs")

@@ -1,0 +1,52 @@
+# Generated from env_windows.yml
+# Conda packages
+torch
+torchvision
+torchaudio
+numpy==1.23.1   
+# numpy          drop specific version for livio version or set python version TODO
+pandas
+scipy
+scikit-learn
+matplotlib
+jupyterlab
+notebook
+ipywidgets
+statsmodels
+# ffmpeg is a system dependency, not a pip package. Ensure it is installed and in PATH.
+
+# Pip packages
+absl-py
+addict
+aiofiles
+anyio
+audioread
+bleach
+click
+fastapi
+filelock
+huggingface-hub
+joblib
+librosa
+mido
+nicegui
+note-seq
+numba
+pillow==9.2.0   
+# pillow        drop specific version for livio version or set python version
+pretty-midi
+pydub
+pyfluidsynth
+pypianoroll
+python-dotenv
+python-socketio
+pyyaml
+rich
+soundfile
+tensorboard-plugin-wit
+transformers==4.24.0    
+# transformers          drop specific version for livio version or set python version
+uvicorn
+visdom
+watchfiles
+websockets

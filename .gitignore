@@ -2,3 +2,10 @@ logs/
 *.sf2
 .idea
 __pycache__
+
+# # livio version
+# *.sf2
+# .idea
+# __pycache__
+# *.err
+# *.out

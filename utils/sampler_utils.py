@@ -5,12 +5,15 @@ from torch.nn import DataParallel
 
 # from .log_utils import save_latents, log
 from models import Transformer, AbsorbingDiffusion, ConVormer, HierarchTransformer, UTransformer
+# from models import Transformer, AbsorbingDiffusion, ConVormer, HierarchTransformer, UTransformer, MusicBERTDiffusion  # livio version TODO
 from preprocessing import OneHotMelodyConverter, TrioConverter
 
 
 def get_sampler(H):
     if H.model == 'transformer' or H.model.startswith('octuple'):
         denoise_fn = Transformer(H).cuda()
+    # elif H.model == 'octuple_musicbert':
+    #     denoise_fn = MusicBERTDiffusion(H).cuda()     # livio version TODO
     elif H.model == 'hierarch_transformer':
         denoise_fn = HierarchTransformer(H).cuda()
     elif H.model == 'U_transformer':
