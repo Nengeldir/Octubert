@@ -1,6 +1,11 @@
-# logs/
+logs/
 *.sf2
 .idea
 __pycache__
-*.err
-*.out
+
+# # livio version
+# *.sf2
+# .idea
+# __pycache__
+# *.err
+# *.out
