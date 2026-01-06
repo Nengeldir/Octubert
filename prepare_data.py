@@ -14,101 +14,99 @@ from tqdm import tqdm
 from preprocessing.data import TrioConverter, OneHotMelodyConverter
 
 
-def _load_midi_trio(bars, max_t_per_ns, midi):
+
+def process_midi_file(args):
+    """Worker function for processing a single MIDI file."""
+    midi_path, mode, bars, max_t_per_ns = args
+    
+    if mode == 'melody':
+        converter = OneHotMelodyConverter(slice_bars=bars, max_tensors_per_notesequence=max_t_per_ns, gap_bars=None, presplit_on_time_changes=False)
+    else:  # trio
+        converter = TrioConverter(slice_bars=bars, max_tensors_per_notesequence=max_t_per_ns, gap_bars=None, presplit_on_time_changes=False)
+        
     result = []
-    converter = TrioConverter(slice_bars=bars, max_tensors_per_notesequence=max_t_per_ns, gap_bars=None, presplit_on_time_changes=False)
     try:
         with warnings.catch_warnings(record=True):
             warnings.simplefilter("always")
-            ns = midi_to_note_sequence(open(midi, 'rb').read())
-            result = list(converter.to_tensors(ns).outputs)  # tensor-shape: (len, 3) = len x (melody, bass, drums)
+            # Read file content
+            with open(midi_path, 'rb') as f:
+                content = f.read()
+            ns = midi_to_note_sequence(content)
+            
+            # Conversion returns a named tuple with 'outputs' being the list of tensors
+            tensors = converter.to_tensors(ns).outputs
+            result = list(tensors)
     except Exception as e:
+        # Pass silently to avoid spamming logs during large dataset processing
         pass
-        #logging.info(e) todo: make this not destroy tqdm
     return result
 
 
-def _load_midi_melody(bars, max_t_per_ns, midi):
-    result = []
-    converter = OneHotMelodyConverter(slice_bars=bars, max_tensors_per_notesequence=max_t_per_ns, gap_bars=None, presplit_on_time_changes=False)
-    try:
-        with warnings.catch_warnings(record=True):
-            warnings.simplefilter("always")
-            ns = midi_to_note_sequence(open(midi, 'rb').read())
-            result = list(converter.to_tensors(ns).outputs)  # tensor-shape: (len, 3) = len x (melody, bass, drums)
-    except Exception as e:
-        pass
-        #logging.info(e) todo: make this not destroy tqdm
-    return result
-
-def load_lakh_trio(path="/media/plassma/Data/Lakh/lmd_full/", bars=16, max_tensors_per_ns=5, cache_path='data/lakh_trio_BIG_64.npy', limit=0):
-    if os.path.exists(cache_path):
-        return np.load(cache_path)
-
-    root_dir = Path(path)
-    p = Pool(40)
-    if limit:
-        result = list(tqdm(p.imap(partial(_load_midi_trio, bars, max_tensors_per_ns), itertools.islice(sorted(root_dir.rglob("*.mid")), limit)), total=limit))
-    else:
-        midis = sorted(root_dir.rglob("*.mid"))
-        result = list(tqdm(p.imap(partial(_load_midi_trio, bars, max_tensors_per_ns), midis), total=len(midis), miniters=1))
-
-    ##begin dbg
-    #result = []
-    #for midi in tqdm(sorted(root_dir.rglob("*.mid"))):
-    #    result.append(_load_midi(midi))
-    #end dbg
-    result = list(chain(*result))
-    np.save(cache_path, result)
-
-    return result
-
-
-def load_lakh_melody(path="lmd_full/", bars=16, max_tensors_per_ns=5, cache_path='data/lakh_melody_BIG_64.npy', limit=0):
-    if os.path.exists(cache_path):
+def load_dataset(root_dir, mode='melody', bars=64, max_tensors_per_ns=5, cache_path=None, limit=0):
+    """
+    Loads and processes a dataset of MIDI files.
+    
+    Args:
+        root_dir (str): Path to the root directory containing MIDI files (searched recursively).
+        mode (str): 'melody' or 'trio'.
+        bars (int): Number of bars per sequence.
+        max_tensors_per_ns (int): Max tensors to extract per MIDI file.
+        cache_path (str): Path to save/load the .npy cache.
+        limit (int): Limit the number of files processed (0 for no limit).
+    """
+    if cache_path and os.path.exists(cache_path):
+        print(f"Loading cached dataset from {cache_path}...")
         return np.load(cache_path, allow_pickle=True)
 
-    root_dir = Path(path)
-    p = Pool(40)
-    if limit:
-        result = list(tqdm(p.imap(partial(_load_midi_melody, bars, max_tensors_per_ns), itertools.islice(sorted(root_dir.rglob("*.mid")), limit)), total=limit))
-    else:
-        midis = sorted(root_dir.rglob("*.mid"))
-        result = list(tqdm(p.imap(partial(_load_midi_melody, bars, max_tensors_per_ns), midis), total=len(midis), miniters=1))
-
+    print(f"Processing dataset from {root_dir} in '{mode}' mode...")
+    root_path = Path(root_dir)
     
-    result = list(chain(*result))
-    np.save(cache_path, result)
+    # Verify root_dir exists
+    if not root_path.exists():
+        raise FileNotFoundError(f"Root directory not found: {root_dir}")
+
+    # Gather all MIDI files
+    all_midis = sorted(root_path.rglob("*.mid"))
+    
+    if limit > 0:
+        all_midis = all_midis[:limit]
+        
+    print(f"Found {len(all_midis)} MIDI files.")
+    
+    worker_args = [(str(m), mode, bars, max_tensors_per_ns) for m in all_midis]
+    
+    # Use multiprocessing
+    num_processes = min(40, os.cpu_count() or 4)
+    result = []
+    
+    with Pool(num_processes) as p:
+        for file_res in tqdm(p.imap(process_midi_file, worker_args), total=len(worker_args)):
+            result.extend(file_res)
+
+    print(f"Extracted {len(result)} sequences.")
+    
+    if cache_path:
+        print(f"Saving to {cache_path}...")
+        np.save(cache_path, result)
 
     return result
 
 
 if __name__ == '__main__':
-    # Original
-    # parser = argparse.ArgumentParser()
-    # parser.add_argument("--root_dir", type=str, default="lmd_full/")
-    # parser.add_argument("--mode", type=str, default="melody")
-    # parser.add_argument("--target", type=str, default="data/lakh.npy")
-    # parser.add_argument("--limit", type=int, default=0)
-    # parser.add_argument("--bars", type=int, default=64)
-
-    # args = parser.parse_args()
-
-    # if args.mode == 'melody':
-    #     load_lakh_melody(path=args.root_dir, bars=args.bars, cache_path=args.target, limit=args.limit)
-    # else:
-    #     load_lakh_trio(path=args.root_dir, bars=args.bars, cache_path=args.target, limit=args.limit)
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--root_dir", type=str, default = "data/POP909")
-    parser.add_argument("--mode", type=str, default = "melody")
-    parser.add_argument("--target", type=str, default = "data/POP909_melody.npy")
-    parser.add_argument("--limit", type=int, default = 0)
-    parser.add_argument("--bars", type=int, default = 64)
+    parser = argparse.ArgumentParser(description="Prepare dataset for Octubert")
+    parser.add_argument("--root_dir", type=str, default="data/POP909", help="Root directory of the dataset")
+    parser.add_argument("--mode", type=str, default="melody", choices=['melody', 'trio'], help="Extraction mode")
+    parser.add_argument("--target", type=str, default="data/POP909_melody.npy", help="Output .npy file")
+    parser.add_argument("--limit", type=int, default=0, help="Limit number of files to process")
+    parser.add_argument("--bars", type=int, default=64, help="Sequence length in bars")
 
     args = parser.parse_args()
 
-    if args.mode == 'melody':
-        load_lakh_melody(path=args.root_dir, bars=args.bars, cache_path=args.target, limit=args.limit)
-    else:
-        load_lakh_trio(path=args.root_dir, bars=args.bars, cache_path=args.target, limit=args.limit)
+    load_dataset(
+        root_dir=args.root_dir,
+        mode=args.mode,
+        bars=args.bars,
+        cache_path=args.target,
+        limit=args.limit
+    )
+
