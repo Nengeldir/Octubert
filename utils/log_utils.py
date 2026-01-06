@@ -1,10 +1,9 @@
 import os
 import torch
-import visdom
 import numpy as np
 import logging
 from preprocessing.data import TrioConverter, OneHotMelodyConverter
-from note_seq import fluidsynth, note_sequence_to_midi_file
+from note_seq import note_sequence_to_midi_file
 
 
 def log(output):
@@ -204,65 +203,12 @@ def samples_2_noteseq(np_samples):
         return converter.from_tensors(np_samples)
 
 
-def sample_audio(samples):
-    samples = samples.copy()
-    if len(samples.shape) < 3:
-        samples = np.expand_dims(samples, 0)
-    samples[samples == 90] = 0#todo: could remove drum pattern
-    samples[samples == 512] = 0
-    samples = samples_2_noteseq(samples)
-    try:
-        return [fluidsynth(s, 44100., 'soundfont.sf2') for s in samples]
-    except ImportError:
-        log("Skipping audio generation: pyfluidsynth not installed.")
-        return []
-    except Exception as e:
-        log(f"Skipping audio generation: {e}")
-        return []
-
-
 def vis_samples(vis, samples, step):
-    audios = sample_audio(samples)
-
-    for i, audio in enumerate(audios):
-        t = f'sample_{i}'
-        try:
-            vis.audio(audio, win=t, env=f'samples_{step}', opts=dict(title=t))
-        except Exception as e:
-            log(f'could not vis audio sample {i} for step {step}')
-            log(e)
-
-
-def load_stats(H, step):
-    if os.path.isabs(H.load_dir):
-        load_dir = H.load_dir
-    else:
-        load_dir = f"logs/{H.load_dir}"
-    load_path = f"{load_dir}/saved_stats/stats_{step}"
-    stats = torch.load(load_path)
-    return stats
-
-
-def log_stats(step, stats):
-    log_str = f"Step: {step}  "
-    for stat in stats:
-        if "latent_ids" not in stat:
-            try:
-                log_str += f"{stat}: {stats[stat]:.4f}  "
-            except TypeError:
-                log_str += f"{stat}: {stats[stat].mean().item():.4f}  "
-
-    log(log_str)
+    pass  # Visualization removed
 
 
 def set_up_visdom(H):
-    try:
-        vis = visdom.Visdom(port=H.port, use_incoming_socket=False, raise_exceptions=True)
-        return vis
-    except Exception as e:
-        log(f"Failed to connect to Visdom server at port {H.port}: {e}")
-        log("Training will continue without visualization.")
-        class MockVisdom:
-            def __getattribute__(self, name):
-                return lambda *args, **kwargs: None
-        return MockVisdom()
+    class MockVisdom:
+        def __getattribute__(self, name):
+            return lambda *args, **kwargs: None
+    return MockVisdom()
