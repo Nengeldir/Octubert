@@ -36,7 +36,6 @@ conda env create -f env.yml
 conda activate symbolic-music-discrete-diffusion
 ```
 
-*Note: A soundfont file `soundfont.sf2` (not included) must be placed in the project root for audio rendering functionalities.*
 
 ## Usage
 
@@ -55,15 +54,15 @@ To train an Octubert model with the **Mixed** masking strategy (recommended):
 python train.py --dataset data/POP909_melody.npy --bars 64 --batch_size 16 --tracks melody --model octuple_mixed --masking_strategy mixed
 ```
 
-### 3. Infilling (The "Magic" Step)
+### 3. Infilling
 To take an existing song (`input.mid`) and fill in a gap (e.g., bars 16-32) with new music:
 
 ```bash
 python infill.py --load_dir logs/log_octuple_mixed_melody_1024 --input_midi input.mid --start_bar 16 --end_bar 32
 ```
 
-### 4. Interactive GUI
-Launch the web-based GUI for interactive sampling and visualization:
+### 4. Sampling
+Generate music using the trained model:
 
 ```bash
 python sample.py --load_step 140000 --bars 64 --tracks trio --model conv_transformer

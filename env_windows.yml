@@ -38,7 +38,6 @@ dependencies:
     - pillow # 9.2.0
     - pretty-midi
     - pydub
-    - pyfluidsynth
     - pypianoroll
     - python-dotenv
     - pyyaml
@@ -46,4 +45,3 @@ dependencies:
     - soundfile
     - tensorboard-plugin-wit
     - transformers==4.24.0
-    - visdom
