@@ -6,6 +6,11 @@ _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..",
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
+# Also ensure 'src' is on sys.path so 'smdiff' package resolves when running by path
+_SRC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if _SRC_DIR not in sys.path:
+    sys.path.insert(0, _SRC_DIR)
+    
 import yaml
 import argparse
 from typing import Dict, List
