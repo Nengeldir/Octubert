@@ -615,7 +615,7 @@ class OneHotMelodyConverter(LegacyEventListOneHotConverter):
                add_end_token=False, pad_to_total_time=False,
                max_tensors_per_notesequence=5, presplit_on_time_changes=True,
                chord_encoding=None, condition_on_key=False,
-               dedupe_event_lists=True):
+               dedupe_event_lists=True, strict_tempo=False):
     """Initialize a OneHotMelodyConverter object.
 
     Args:
@@ -651,6 +651,8 @@ class OneHotMelodyConverter(LegacyEventListOneHotConverter):
     self._min_pitch = min_pitch
     self._max_pitch = max_pitch
     self._valid_programs = valid_programs
+    self._strict_tempo = strict_tempo
+    self.last_chosen_tempo = None
     steps_per_bar = steps_per_quarter * quarters_per_bar
     max_steps_truncate = steps_per_bar * max_bars if max_bars else None
 
@@ -694,6 +696,17 @@ class OneHotMelodyConverter(LegacyEventListOneHotConverter):
     return self._melody_encoding
 
   def _to_tensors_fn(self, note_sequence):
+    # Sanitize time signatures and tempos before processing
+    try:
+      self._sanitize_time_signatures(note_sequence)
+    except Exception:
+      pass
+    if not self._strict_tempo:
+      try:
+        self.last_chosen_tempo = self._sanitize_tempos(note_sequence)
+      except Exception:
+        self.last_chosen_tempo = None
+    
     def is_valid(note):
       if (self._valid_programs is not None and
           note.program not in self._valid_programs):
@@ -710,6 +723,43 @@ class OneHotMelodyConverter(LegacyEventListOneHotConverter):
                                      self._presplit_on_time_changes,
                                      self.max_tensors_per_notesequence,
                                      self.is_training, self._to_tensors_fn)
+
+  def _sanitize_time_signatures(self, ns):
+    """Normalize NoteSequence time signatures to a single 4/4 at time 0."""
+    ts_list = list(ns.time_signatures)
+    del ns.time_signatures[:]
+    chosen = None
+    for ts in ts_list:
+      if ts.time <= 1e-3 and ts.numerator == 4 and ts.denominator == 4:
+        chosen = ts
+        break
+    if chosen is None:
+      chosen = ns.time_signatures.add()
+      chosen.time = 0.0
+      chosen.numerator = 4
+      chosen.denominator = 4
+    else:
+      new_ts = ns.time_signatures.add()
+      new_ts.time = 0.0
+      new_ts.numerator = 4
+      new_ts.denominator = 4
+
+  def _sanitize_tempos(self, ns):
+    """Normalize NoteSequence tempos to a single event at time 0."""
+    tempos = list(ns.tempos)
+    del ns.tempos[:]
+    chosen = None
+    for t in tempos:
+      if t.time <= 1e-3:
+        chosen = t
+        break
+    if chosen is None and tempos:
+      chosen = min(tempos, key=lambda x: x.time)
+    qpm = chosen.qpm if chosen is not None else 120.0
+    tempo = ns.tempos.add()
+    tempo.time = 0.0
+    tempo.qpm = qpm
+    return qpm
 
 
 class DrumsConverter(BaseNoteSequenceConverter):
