@@ -1198,7 +1198,7 @@ class POP909TrioConverter(BaseNoteSequenceConverter):
 
   def __init__(self, slice_bars=None, max_bars=1024, steps_per_quarter=4,
                quarters_per_bar=4, max_tensors_per_notesequence=5,
-               presplit_on_time_changes=True):
+               presplit_on_time_changes=True, gap_bars=None):
     """Initialize a POP909TrioConverter.
 
     Args:
@@ -1208,6 +1208,7 @@ class POP909TrioConverter(BaseNoteSequenceConverter):
       quarters_per_bar: Quarter notes per bar.
       max_tensors_per_notesequence: Max outputs per NoteSequence.
       presplit_on_time_changes: Whether to split on time changes before converting.
+      gap_bars: Ignored; present for API compatibility with OneHotMelodyConverter.
     """
     self._slice_bars = slice_bars
     self._max_bars = max_bars
