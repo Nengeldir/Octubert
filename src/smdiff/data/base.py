@@ -28,6 +28,22 @@ class SimpleNpyDataset(torch.utils.data.Dataset):
         # 1. Get the full sequence
         x = self.data[idx]
         
+        # Handle object dtype arrays (from pickled .npy files)
+        if isinstance(x, np.ndarray) and x.dtype == object:
+            # Object arrays can't be directly converted to torch tensors
+            # Try to convert to a regular numeric array first
+            try:
+                x = np.asarray(x, dtype=np.int64)
+            except (ValueError, TypeError):
+                # If that fails, the data might be nested - extract the actual array
+                if hasattr(x, '__getitem__') and len(x) > 0:
+                    x = x[0] if isinstance(x[0], np.ndarray) else x
+                x = np.asarray(x, dtype=np.int64)
+        
+        # Ensure we have a proper numpy array at this point
+        if not isinstance(x, np.ndarray):
+            x = np.array(x, dtype=np.int64)
+        
         # 2. Random Crop (Common to both)
         length = x.shape[0]
         if length > self.seq_len:
