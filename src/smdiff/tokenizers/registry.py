@@ -1,35 +1,53 @@
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional
 
-from ..preprocessing import OneHotMelodyConverter, TrioConverter
-from ..data.octuple import OctupleEncoding
-
-
 @dataclass(frozen=True)
 class TokenizerSpec:
     id: str
     description: str
-    factory: Callable[[], object]
+    factory: Optional[Callable] = None
     available: bool = True
     notes: Optional[str] = None
+
+
+def _create_melody_onehot():
+    from ..preprocessing.data import OneHotMelodyConverter
+    return OneHotMelodyConverter()
+
+def _create_trio_onehot():
+    from ..preprocessing.data import POP909TrioConverter
+    return POP909TrioConverter()
+
+def _create_melody_octuple():
+    from ..preprocessing.data import POP909OctupleMelodyConverter
+    return POP909OctupleMelodyConverter()
+
+def _create_trio_octuple():
+    from ..preprocessing.data import POP909OctupleTrioConverter
+    return POP909OctupleTrioConverter()
 
 
 TOKENIZER_REGISTRY: Dict[str, TokenizerSpec] = {
     "melody_onehot": TokenizerSpec(
         id="melody_onehot",
         description="One-hot melody converter (1 track)",
-        factory=lambda: OneHotMelodyConverter(),
+        factory=_create_melody_onehot
     ),
     "trio_onehot": TokenizerSpec(
         id="trio_onehot",
         description="One-hot trio converter (3 tracks)",
-        factory=lambda: TrioConverter(),
+        factory=_create_trio_onehot
     ),
-    "octuple": TokenizerSpec(
-        id="octuple",
-        description="Octuple MIDI encoding (8-tuple tokens)",
-        factory=lambda: OctupleEncoding(),
+    "melody_octuple": TokenizerSpec(
+        id="melody_octuple",
+        description="Octuple melody converter (1 track, 8-tuple tokens)",
+        factory=_create_melody_octuple
     ),
+    "trio_octuple": TokenizerSpec(
+        id="trio_octuple",
+        description="Octuple trio converter (3 tracks, 8-tuple tokens with program encoding)",
+        factory=_create_trio_octuple
+    )
 }
 
 

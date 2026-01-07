@@ -1,4 +1,8 @@
-"""PyTorch Dataset for Octuple-encoded MIDI data."""
+"""
+PyTorch Dataset for Octuple-encoded MIDI data.
+This class is deprecated.
+"""
+
 import os
 import numpy as np
 import torch

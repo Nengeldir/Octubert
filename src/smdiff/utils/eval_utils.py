@@ -9,7 +9,7 @@ from note_seq import quantize_note_sequence
 from note_seq import sequences_lib
 from tqdm import tqdm
 
-from ..data import SubseqSampler
+from ..data import SimpleNpyDataset
 from ..utils.log_utils import log
 from ..utils.sampler_utils import get_samples, np_to_ns
 from ..utils.train_utils import augment_note_tensor

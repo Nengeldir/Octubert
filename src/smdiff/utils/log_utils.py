@@ -2,7 +2,7 @@ import os
 import torch
 import numpy as np
 import logging
-from ..preprocessing.data import TrioConverter, OneHotMelodyConverter
+from ..preprocessing.data import POP909TrioConverter, OneHotMelodyConverter
 from ..cluster import sync_to_home
 from note_seq import note_sequence_to_midi_file
 
@@ -138,17 +138,17 @@ def save_samples(np_samples, step, log_dir):
 
 def save_stats(H, stats, step):
     """
-    Save evaluation metrics to log_dir/metrics/.
+    Save training statistics to log_dir/stats/.
     
     Args:
         H: Hyperparameters object with log_dir
-        stats: Dictionary of evaluation statistics
+        stats: Dictionary of training statistics
         step: Training step number
     """
     base_dir = H.log_dir if os.path.isabs(H.log_dir) else H.log_dir
-    metrics_dir = os.path.join(base_dir, "metrics")
-    os.makedirs(metrics_dir, exist_ok=True)
-    save_path = os.path.join(metrics_dir, f"stats_{step}.pt")
+    stats_dir = os.path.join(base_dir, "stats")
+    os.makedirs(stats_dir, exist_ok=True)
+    save_path = os.path.join(stats_dir, f"stats_{step}.pt")
     log(f"Saving stats to {save_path}")
     torch.save(stats, save_path)
     
@@ -156,55 +156,71 @@ def save_stats(H, stats, step):
     sync_to_home(save_path)
 
 
+def load_stats(H, step):
+    """
+    Load training statistics from log_dir/stats/.
+    
+    Args:
+        H: Hyperparameters object with log_dir
+        step: Training step number
+        
+    Returns:
+        dict: Dictionary of training statistics
+    """
+    base_dir = H.log_dir if os.path.isabs(H.log_dir) else H.log_dir
+    stats_dir = os.path.join(base_dir, "stats")
+    load_path = os.path.join(stats_dir, f"stats_{step}.pt")
+    
+    if not os.path.exists(load_path):
+        raise FileNotFoundError(f"Stats file not found: {load_path}")
+    
+    log(f"Loading stats from {load_path}")
+    return torch.load(load_path)
+
+
+def log_stats(step, stats):
+    """
+    Log training statistics to console and file.
+    
+    Args:
+        step: Training step number
+        stats: Dictionary of statistics to log
+    """
+    msg_parts = [f"Step {step}"]
+    for key, value in stats.items():
+        if isinstance(value, (int, float)):
+            msg_parts.append(f"{key}: {value:.6f}")
+        elif hasattr(value, 'item'):  # torch.Tensor
+            msg_parts.append(f"{key}: {value.item():.6f}")
+    log(" | ".join(msg_parts))
+
+
 def save_noteseqs(ns, prefix='pre_adv'):
     for i, n in enumerate(ns):
         note_sequence_to_midi_file(n, prefix + f'_{i}.mid')
 
 
-def samples_2_noteseq(np_samples):
+def samples_2_noteseq(np_samples, tokenizer_id=None):
     """
-    Convert numpy samples to note_seq objects.
-    
-    Supports multiple formats:
-    - 3-tuple: Trio format
-    - 8-tuple: Octuple format
-    - Other: One-hot melody format
-    
-    Args:
-        np_samples: NumPy array of samples
+    Convert numpy samples to note_seq objects using tokenizer registry.
+    """
+    if tokenizer_id:
+        from ..tokenizers.registry import TOKENIZER_REGISTRY
+        spec = TOKENIZER_REGISTRY.get(tokenizer_id)
         
-    Returns:
-        list: List of note_seq.NoteSequence objects
-    """
-    if np_samples.shape[2] == 3:
-        converter = TrioConverter(16)
-        return converter.from_tensors(np_samples)
-    elif np_samples.shape[2] == 8:
-        from ..data.octuple import OctupleEncoding
-        import tempfile
-        import note_seq
-        converter = OctupleEncoding()
-        note_seqs = []
-        for s in np_samples:
-            midi_obj = converter.decode(s)
-            with tempfile.NamedTemporaryFile(suffix='.mid') as tmp:
-                midi_obj.dump(tmp.name)
-                ns = note_seq.midi_to_note_sequence(
-                    open(tmp.name, 'rb').read())
-            note_seqs.append(ns)
-        return note_seqs
-    else:
-        converter = OneHotMelodyConverter()
-        np_samples = np_samples[:, :, 0]
-        return converter.from_tensors(np_samples)
+        if spec and spec.factory:
+            converter = spec.factory()
+                    
+            # 1. Handle OneHot shape quirk (Melody OneHot expects 2D, Octuple expects 2D/3D)
+            # If it's legacy OneHot and has an extra dim, squeeze it.
+            if 'melody' in tokenizer_id and 'onehot' in tokenizer_id:
+                 if np_samples.ndim == 3 and np_samples.shape[2] == 1:
+                    np_samples = np_samples[:, :, 0]
+
+            # 2. Call the unified method
+            return converter.from_tensors(np_samples)
+            
+    return []
+    
 
 
-def vis_samples(vis, samples, step):
-    pass  # Visualization removed
-
-
-def set_up_visdom(H):
-    class MockVisdom:
-        def __getattribute__(self, name):
-            return lambda *args, **kwargs: None
-    return MockVisdom()

@@ -12,6 +12,7 @@ sequence models like transformers.
 import miditoolkit
 import numpy as np
 import math
+import io
 
 # ============================================================================
 # CONSTANTS - Define the quantization and range parameters
@@ -154,28 +155,65 @@ class OctupleEncoding:
     def __init__(self):
         pass
 
-    def encode(self, midi_path):
+    def encode_notesequence(self, note_sequence):
         """
-        Reads a MIDI file and converts it to a sequence of Octuple tokens.
+        Converts a note_seq.NoteSequence to octuple tokens using in-memory streams.
+        """
+        # Change the import to get the PrettyMIDI converter directly
+        from note_seq import note_sequence_to_pretty_midi
+        import io
+        
+        # 1. Convert NoteSequence to a PrettyMIDI object first
+        pm = note_sequence_to_pretty_midi(note_sequence)
+        
+        # 2. Create an in-memory buffer
+        midi_stream = io.BytesIO()
+        
+        # 3. Write directly to the buffer 
+        # (PrettyMIDI.write supports file-like objects, unlike the note_seq wrapper)
+        pm.write(midi_stream)
+        
+        # 4. Rewind the buffer so it can be read
+        midi_stream.seek(0)
+        
+        # 5. Pass the stream to your encode method
+        return self.encode(midi_stream)
+
+    def encode(self, input_obj):
+        """
+        Reads a MIDI file (or stream) and converts it to a sequence of Octuple tokens.
         
         Args:
-            midi_path: Path to the MIDI file
+            input_obj: Path to the MIDI file (str) or a file-like object (BytesIO)
             
         Returns:
-            np.array of shape (N, 8) where N is the number of notes
-            Each row is [bar, position, program, pitch, duration, velocity, time_sig, tempo]
+            np.array of shape (N, 8)
         """
         # Load MIDI file
         try:
-            midi_obj = miditoolkit.MidiFile(midi_path)
+            # Handle both string paths and file-like objects
+            if isinstance(input_obj, str):
+                midi_obj = miditoolkit.MidiFile(input_obj)
+            else:
+                # Assuming input_obj is a file-like object (BytesIO)
+                midi_obj = miditoolkit.MidiFile(file=input_obj)
         except Exception as e:
-            print(f"Error loading MIDI file {midi_path}: {e}")
+            print(f"Error loading MIDI input: {e}")
             return np.array([], dtype=int)
 
         # Helper function to convert MIDI ticks to quantized positions
         def time_to_pos(t):
-            return round(t * pos_resolution / midi_obj.ticks_per_beat)
+            # Guard against zero division if ticks_per_beat is missing/zero
+            tpb = midi_obj.ticks_per_beat if midi_obj.ticks_per_beat > 0 else 480
+            return round(t * pos_resolution / tpb)
 
+        # ... (The rest of the encode method remains exactly the same) ...
+        # Start from: # Get all note start positions
+        # notes_start_pos = [time_to_pos(j.start) ...
+        
+        # ... copy the rest of the original encode logic here ...
+        
+        # Ensure to include the rest of the function:
         # Get all note start positions
         notes_start_pos = [time_to_pos(j.start)
                            for i in midi_obj.instruments for j in i.notes]
@@ -194,50 +232,38 @@ class OctupleEncoding:
         
         # Fill in time signatures for each position
         for i in range(len(tsc)):
-            # Get the range this time signature applies to
             start_pos = time_to_pos(tsc[i].time)
             end_pos = time_to_pos(tsc[i + 1].time) if i < len(tsc) - 1 else max_pos
-            
             for j in range(start_pos, end_pos):
                 if j < len(pos_to_info):
-                    # Encode and reduce the time signature
                     pos_to_info[j][1] = t2e(time_signature_reduce(tsc[i].numerator, tsc[i].denominator))
         
         # Fill in tempos for each position
         for i in range(len(tpc)):
-            # Get the range this tempo applies to
             start_pos = time_to_pos(tpc[i].time)
             end_pos = time_to_pos(tpc[i + 1].time) if i < len(tpc) - 1 else max_pos
-            
             for j in range(start_pos, end_pos):
                 if j < len(pos_to_info):
                     pos_to_info[j][3] = b2e(tpc[i].tempo)
         
-        # Fill in default values for positions without explicit time signature/tempo
+        # Fill in default values
         for j in range(len(pos_to_info)):
             if pos_to_info[j][1] is None:
-                # MIDI default time signature is 4/4
                 pos_to_info[j][1] = t2e(time_signature_reduce(4, 4))
             if pos_to_info[j][3] is None:
-                # MIDI default tempo is 120 BPM
                 pos_to_info[j][3] = b2e(120.0)
         
-        # Calculate bar numbers and positions within bars
-        cnt = 0  # Position counter within current bar
-        bar = 0  # Current bar number
-        measure_length = None  # Length of current measure in positions
+        # Calculate bar numbers
+        cnt = 0
+        bar = 0
+        measure_length = None
         
         for j in range(len(pos_to_info)):
-            ts = e2t(pos_to_info[j][1])  # Get time signature
-            
+            ts = e2t(pos_to_info[j][1])
             if cnt == 0:
-                # Calculate measure length based on time signature
-                # e.g., 4/4 = 4 * 4 * 16 / 4 = 64 positions
                 measure_length = ts[0] * beat_note_factor * pos_resolution // ts[1]
-            
-            pos_to_info[j][0] = bar  # Set bar number
-            pos_to_info[j][2] = cnt  # Set position within bar
-            
+            pos_to_info[j][0] = bar
+            pos_to_info[j][2] = cnt
             cnt += 1
             if cnt >= measure_length:
                 cnt -= measure_length
@@ -247,29 +273,25 @@ class OctupleEncoding:
         encoding = []
         for inst in midi_obj.instruments:
             for note in inst.notes:
-                # Skip notes beyond truncation point
                 if time_to_pos(note.start) >= trunc_pos:
                     continue
                 
-                # Get position info for this note
                 info = pos_to_info[time_to_pos(note.start)]
                 
-                # Create the 8-tuple encoding
                 encoding.append((
                     info[0],  # Bar
                     info[2],  # Position within bar
-                    max_inst + 1 if inst.is_drum else inst.program,  # Program (128 for drums)
-                    note.pitch + max_pitch + 1 if inst.is_drum else note.pitch,  # Pitch (offset for drums)
-                    d2e(time_to_pos(note.end) - time_to_pos(note.start)),  # Duration (encoded)
-                    v2e(note.velocity),  # Velocity (encoded)
-                    info[1],  # Time signature (encoded)
-                    info[3]   # Tempo (encoded)
+                    max_inst + 1 if inst.is_drum else inst.program,
+                    note.pitch + max_pitch + 1 if inst.is_drum else note.pitch,
+                    d2e(time_to_pos(note.end) - time_to_pos(note.start)),
+                    v2e(note.velocity),
+                    info[1],  # Time signature
+                    info[3]   # Tempo
                 ))
         
         if len(encoding) == 0:
             return np.array([], dtype=int)
         
-        # Sort by (bar, position) for consistent ordering
         encoding.sort()
         return np.array(encoding, dtype=int)
 

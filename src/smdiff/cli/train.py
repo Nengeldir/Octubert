@@ -5,8 +5,8 @@ import argparse
 from typing import Dict, List
 
 from hparams.set_up_hparams import get_sampler_hparams
-from smdiff.utils.log_utils import set_up_visdom, config_log, log, start_training_log
-import train as legacy_train
+from smdiff.utils.log_utils import config_log, log, start_training_log
+from smdiff import trainer
 
 from smdiff.registry import resolve_model_id
 from smdiff.configs.loader import load_config
@@ -142,8 +142,7 @@ def main():
     if not H.load_dir:
         H.load_dir = H.log_dir
 
-    # Proceed with legacy training main()
-    vis = set_up_visdom(H)
+    # Proceed with training
     config_log(H.log_dir)
     # Snapshot effective config and CLI into runs/{model}/configs
     try:
@@ -163,7 +162,7 @@ def main():
     log('---------------------------------')
     log(f'Setting up training for {H.sampler} (model={H.model})')
     start_training_log(H)
-    legacy_train.main(H, vis)
+    trainer.main(H)
 
 
 if __name__ == "__main__":

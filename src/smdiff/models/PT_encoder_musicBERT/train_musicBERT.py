@@ -20,8 +20,8 @@ from torch.optim import Adam
 # Add src to path
 sys.path.append(os.path.abspath('..'))
 
-from src.models.musicbert import MusicBERT, MusicBERTConfig
-from src.datasets.musicbert_dataset import MusicBERTDataset
+from ...models.musicbert import MusicBERT, MusicBERTConfig
+from smdiff.data.musicbert import MusicBERTDataset
 
 # %%
 # Configuration

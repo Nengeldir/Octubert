@@ -7,22 +7,12 @@ from ..models import Transformer, AbsorbingDiffusion, ConVormer, HierarchTransfo
 from ..registry import resolve_model_id
 
 
-# Map internal_model strings to model classes
-_MODEL_CLASS_MAP = {
-    'transformer': Transformer,
-    'octuple_ddpm': Transformer,
-    'octuple_mask_ddpm': Transformer,
-    'conv_transformer': ConVormer,
-    'hierarch_transformer': HierarchTransformer,
-    'U_transformer': UTransformer,
-}
-
-
 def get_sampler(H):
     """
     Factory function to create a sampler based on model type.
     
     Uses the model registry to resolve model IDs to internal implementations.
+    The registry entry includes a factory function that handles model instantiation.
     
     Args:
         H: Hyperparameters object with model configuration
@@ -30,27 +20,19 @@ def get_sampler(H):
     Returns:
         AbsorbingDiffusion sampler with appropriate denoising model
     """
-    # Resolve model_id to get internal_model string
+    # Resolve model_id to get ModelSpec with factory
     try:
         model_spec = resolve_model_id(H.model)
-        internal_model = model_spec.internal_model
     except (ValueError, AttributeError):
-        # Fallback for legacy code paths that use internal names directly
-        internal_model = H.model
+        raise ValueError(f"Unknown model id '{H.model}'")
     
-    # Get the model class from the map
-    model_class = _MODEL_CLASS_MAP.get(internal_model)
-    if model_class is None:
+    # Use the factory function from the registry
+    if model_spec.factory is None:
         raise ValueError(
-            f"Unknown internal model '{internal_model}'. "
-            f"Known models: {', '.join(_MODEL_CLASS_MAP.keys())}"
+            f"Model '{H.model}' has no factory registered"
         )
     
-    denoise_fn = model_class(H).cuda()
-    denoise_fn = DataParallel(denoise_fn).cuda()
-    sampler = AbsorbingDiffusion(H, denoise_fn, H.codebook_size)
-
-    return sampler
+    return model_spec.factory(H)
 
 
 @torch.no_grad()

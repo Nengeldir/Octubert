@@ -11,44 +11,55 @@ class DatasetSpec:
     bars: int
     notes: int
     tokenizer_id: str
-    is_directory: bool = False
     available: bool = True
     notes_txt: Optional[str] = None
 
 
 DATASET_REGISTRY: Dict[str, DatasetSpec] = {
+    # OneHot encoded datasets
     "pop909_melody": DatasetSpec(
         id="pop909_melody",
-        description="POP909 melody combined .npy",
+        description="POP909 melody combined .npy (OneHot encoding)",
         dataset_path="data/POP909_melody.npy",
         tracks="melody",
         bars=64,
         notes=1024,
         tokenizer_id="melody_onehot",
-        is_directory=False,
     ),
-    "pop909_octuple": DatasetSpec(
-        id="pop909_octuple",
-        description="POP909 Octuple encoding per-file",
-        dataset_path="data/POP909/processed",
-        tracks="octuple",
-        bars=64,
-        notes=1024,
-        tokenizer_id="octuple",
-        is_directory=True,
-    ),
-    # Placeholder for trio once built
     "pop909_trio": DatasetSpec(
         id="pop909_trio",
-        description="POP909 trio combined .npy",
+        description="POP909 trio combined .npy (OneHot encoding)",
         dataset_path="data/POP909_trio.npy",
         tracks="trio",
         bars=64,
         notes=1024,
         tokenizer_id="trio_onehot",
-        is_directory=False,
         available=True,
-        notes_txt="Generate via prepare_data.py --mode trio --target data/POP909_trio.npy",
+        notes_txt="Generate via: python -m smdiff.cli.prepare_data --tokenizer_id trio_onehot",
+    ),
+    
+    # Octuple encoded datasets
+    "pop909_melody_octuple": DatasetSpec(
+        id="pop909_melody_octuple",
+        description="POP909 melody combined .npy (Octuple encoding)",
+        dataset_path="data/POP909_melody_octuple.npy",
+        tracks="octuple",
+        bars=64,
+        notes=1024,
+        tokenizer_id="melody_octuple",
+        available=True,
+        notes_txt="Generate via: python -m smdiff.cli.prepare_data --tokenizer_id melody_octuple",
+    ),
+    "pop909_trio_octuple": DatasetSpec(
+        id="pop909_trio_octuple",
+        description="POP909 trio combined .npy (Octuple encoding)",
+        dataset_path="data/POP909_trio_octuple.npy",
+        tracks="octuple",
+        bars=64,
+        notes=1024,
+        tokenizer_id="trio_octuple",
+        available=True,
+        notes_txt="Generate via: python -m smdiff.cli.prepare_data --tokenizer_id trio_octuple",
     ),
 }
 

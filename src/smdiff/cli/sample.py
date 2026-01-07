@@ -8,8 +8,8 @@ import torch
 from note_seq import note_sequence_to_midi_file
 
 from hparams.set_up_hparams import get_sampler_hparams
-from utils import load_model
-from smdiff.data.octuple import OctupleDataset, OctupleEncoding
+from smdiff.utils.log_utils import load_model
+from smdiff.data.octuple import OctupleEncoding
 from smdiff.utils.sampler_utils import get_samples, np_to_ns, get_sampler
 
 

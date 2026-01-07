@@ -1,4 +1,4 @@
-"""Prepare POP909 datasets into NumPy caches (melody/trio)."""
+"""Prepare POP909 datasets into NumPy caches (OneHot and Octuple formats)."""
 import argparse
 import os
 import warnings
@@ -10,38 +10,52 @@ import numpy as np
 from note_seq import midi_to_note_sequence
 from tqdm import tqdm
 
-from ..tokenizers.registry import resolve_tokenizer_id
-from ..preprocessing import OneHotMelodyConverter, POP909TrioConverter
-
-
-TOKENIZER_CLASS_MAP = {
-    "melody_onehot": OneHotMelodyConverter,
-    "trio_onehot": POP909TrioConverter,
-}
+from ..preprocessing import (
+    OneHotMelodyConverter, 
+    POP909TrioConverter,
+    POP909OctupleMelodyConverter,
+    POP909OctupleTrioConverter
+)
 
 
 def _make_converter(tokenizer_id: str, bars: int, max_t_per_ns: int, strict_tempo: bool = False):
-    spec = resolve_tokenizer_id(tokenizer_id)
-    if tokenizer_id not in TOKENIZER_CLASS_MAP:
-        raise ValueError(f"Tokenizer '{tokenizer_id}' not supported for MIDI extraction.")
-    converter_cls = TOKENIZER_CLASS_MAP[tokenizer_id]
-    # slice_bars controls segment length; disable gaps and pre-splitting
-    try:
-        return converter_cls(
+
+    # Create converter with proper parameters based on tokenizer_id
+    if tokenizer_id == "melody_onehot":
+        return OneHotMelodyConverter(
+            slice_bars=bars,
+            max_tensors_per_notesequence=max_t_per_ns,
+            gap_bars=None, # type: ignore
+            presplit_on_time_changes=False,
+            strict_tempo=strict_tempo,
+            instrument=0,  # Filter to instrument 0 (MELODY track)
+        )
+    elif tokenizer_id == "trio_onehot":
+        return POP909TrioConverter(
             slice_bars=bars,
             max_tensors_per_notesequence=max_t_per_ns,
             gap_bars=None,
             presplit_on_time_changes=False,
             strict_tempo=strict_tempo,
         )
-    except TypeError:
-        # Converter does not accept strict_tempo
-        return converter_cls(
+    elif tokenizer_id == "melody_octuple":
+        return POP909OctupleMelodyConverter(
             slice_bars=bars,
             max_tensors_per_notesequence=max_t_per_ns,
             gap_bars=None,
             presplit_on_time_changes=False,
+            strict_tempo=strict_tempo,
         )
+    elif tokenizer_id == "trio_octuple":
+        return POP909OctupleTrioConverter(
+            slice_bars=bars,
+            max_tensors_per_notesequence=max_t_per_ns,
+            gap_bars=None,
+            presplit_on_time_changes=False,
+            strict_tempo=strict_tempo,
+        )
+    else:
+        raise ValueError(f"Tokenizer '{tokenizer_id}' not supported for MIDI extraction.")
 
 
 def process_midi_file(args):
@@ -122,17 +136,17 @@ def load_dataset(root_dir: str,
     if cache_path:
         os.makedirs(os.path.dirname(cache_path), exist_ok=True)
         print(f"Saving to {cache_path}...")
-        np.save(cache_path, result)
+        np.save(cache_path, np.array(result, dtype=object))
 
     return np.array(result, dtype=object)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Prepare POP909 melody/trio datasets (combined .npy)")
+    parser = argparse.ArgumentParser(description="Prepare POP909 datasets (OneHot and Octuple formats)")
     parser.add_argument("--root_dir", type=str, default="data/POP909", help="Root directory of the dataset")
     parser.add_argument("--tokenizer_id", type=str, default="melody_onehot",
-                        choices=["melody_onehot", "trio_onehot"],
-                        help="Tokenizer to use for extraction")
+                        choices=["melody_onehot", "trio_onehot", "melody_octuple", "trio_octuple"],
+                        help="Tokenizer to use: OneHot (melody/trio) or Octuple (melody/trio)")
     parser.add_argument("--target", type=str, default=None, help="Output .npy file (defaults per tokenizer)")
     parser.add_argument("--limit", type=int, default=0, help="Limit number of files to process")
     parser.add_argument("--bars", type=int, default=64, help="Sequence length in bars")
@@ -146,7 +160,11 @@ def main():
     if args.target is None:
         if args.tokenizer_id == "trio_onehot":
             args.target = "data/POP909_trio.npy"
-        else:
+        elif args.tokenizer_id == "trio_octuple":
+            args.target = "data/POP909_trio_octuple.npy"
+        elif args.tokenizer_id == "melody_octuple":
+            args.target = "data/POP909_melody_octuple.npy"
+        else:  # melody_onehot
             args.target = "data/POP909_melody.npy"
 
     load_dataset(

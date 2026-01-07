@@ -18,6 +18,8 @@ import collections
 import copy
 import functools
 import itertools
+import os
+import tempfile
 
 import note_seq
 import numpy as np
@@ -27,6 +29,7 @@ from note_seq import sequences_lib
 
 from . import drum_pipelines
 from . import melody_pipelines
+from ..data.octuple import OctupleEncoding
 
 PIANO_MIN_MIDI_PITCH = 21 # 21 is the lowest MIDI pitch for Pianos
 PIANO_MAX_MIDI_PITCH = 108 # 108 is the highest MIDI pitch for Pianos
@@ -275,6 +278,62 @@ class BaseNoteSequenceConverter(object):
   def length_shape(self):
     """Shape of length returned by `to_tensor`."""
     return self._length_shape
+
+  def _sanitize_time_signatures(self, ns):
+    """Normalize NoteSequence time signatures to a single 4/4 at time 0.
+
+    Many POP909 MIDIs include multiple time signatures at t=0 (e.g., 4/4 then
+    1/4) due to encoding artifacts. This method removes all time signature
+    changes and enforces a single 4/4 at the beginning to ensure integer
+    steps-per-bar during quantization.
+    """
+    ts_list = list(ns.time_signatures)
+    del ns.time_signatures[:]
+    chosen = None
+    for ts in ts_list:
+      if ts.time <= 1e-3 and ts.numerator == 4 and ts.denominator == 4:
+        chosen = ts
+        break
+    if chosen is None:
+      # Create canonical 4/4 at t=0
+      chosen = ns.time_signatures.add()
+      chosen.time = 0.0
+      chosen.numerator = 4
+      chosen.denominator = 4
+    else:
+      # Re-add the chosen 4/4, normalized to t=0
+      new_ts = ns.time_signatures.add()
+      new_ts.time = 0.0
+      new_ts.numerator = 4
+      new_ts.denominator = 4
+    # Drop any subsequent time signature changes to keep a fixed bar size.
+
+  def _sanitize_tempos(self, ns):
+    """Normalize NoteSequence tempos to a single event at time 0.
+
+    Quantization in note_seq requires a constant tempo when using
+    `quantize_note_sequence` with fixed `steps_per_quarter`. POP909 often
+    includes slight tempo jitter curves. We select the tempo at t≈0 (or the
+    earliest tempo) and enforce it globally by removing subsequent changes.
+
+    Returns:
+      The selected tempo in QPM (quarters per minute), or 120.0 if no tempos found.
+    """
+    tempos = list(ns.tempos)
+    del ns.tempos[:]
+    chosen = None
+    for t in tempos:
+      if t.time <= 1e-3:
+        chosen = t
+        break
+    if chosen is None and tempos:
+      # Pick earliest tempo event
+      chosen = min(tempos, key=lambda x: x.time)
+    qpm = chosen.qpm if chosen is not None else 120.0
+    tempo = ns.tempos.add()
+    tempo.time = 0.0
+    tempo.qpm = qpm
+    return qpm
 
   @abc.abstractmethod
   def to_tensors(self, item):
@@ -615,7 +674,7 @@ class OneHotMelodyConverter(LegacyEventListOneHotConverter):
                add_end_token=False, pad_to_total_time=False,
                max_tensors_per_notesequence=5, presplit_on_time_changes=True,
                chord_encoding=None, condition_on_key=False,
-               dedupe_event_lists=True, strict_tempo=False):
+               dedupe_event_lists=True, strict_tempo=False, instrument=None):
     """Initialize a OneHotMelodyConverter object.
 
     Args:
@@ -648,12 +707,17 @@ class OneHotMelodyConverter(LegacyEventListOneHotConverter):
       dedupe_event_lists: If True, only keep unique events in the extracted
           event list.
       strict_tempo: If False, sanitize tempo/time sig; if True, keep original.
+      instrument: Optional instrument number to filter to. If None, process all
+          instruments in the sequence. If set (e.g., 0), only extract notes from
+          that instrument.
     """
     self._min_pitch = min_pitch
     self._max_pitch = max_pitch
     self._valid_programs = valid_programs
     self._strict_tempo = strict_tempo
+    self._instrument = instrument
     self.last_chosen_tempo = None
+    
     steps_per_bar = steps_per_quarter * quarters_per_bar
     max_steps_truncate = steps_per_bar * max_bars if max_bars else None
 
@@ -708,10 +772,14 @@ class OneHotMelodyConverter(LegacyEventListOneHotConverter):
       except Exception:
         self.last_chosen_tempo = None
     
-    # Filter to instrument 0 (MELODY track in POP909: MELODY=0, BRIDGE=1, PIANO=2)
-    notes = [n for n in note_sequence.notes if n.instrument == 0]
-    del note_sequence.notes[:]
-    note_sequence.notes.extend(notes)
+    # Filter to specific instrument if requested
+    if self._instrument is not None:
+      before_count = len(note_sequence.notes)
+      notes = [n for n in note_sequence.notes if n.instrument == self._instrument]
+      del note_sequence.notes[:]
+      note_sequence.notes.extend(notes)
+      if before_count > 0 and len(notes) == 0:
+        print(f"Warning: Filtered instrument {self._instrument}, had {before_count} notes, now have 0")
     
     def is_valid(note):
       if (self._valid_programs is not None and
@@ -730,481 +798,6 @@ class OneHotMelodyConverter(LegacyEventListOneHotConverter):
                                      self.max_tensors_per_notesequence,
                                      self.is_training, self._to_tensors_fn)
 
-  def _sanitize_time_signatures(self, ns):
-    """Normalize NoteSequence time signatures to a single 4/4 at time 0."""
-    ts_list = list(ns.time_signatures)
-    del ns.time_signatures[:]
-    chosen = None
-    for ts in ts_list:
-      if ts.time <= 1e-3 and ts.numerator == 4 and ts.denominator == 4:
-        chosen = ts
-        break
-    if chosen is None:
-      chosen = ns.time_signatures.add()
-      chosen.time = 0.0
-      chosen.numerator = 4
-      chosen.denominator = 4
-    else:
-      new_ts = ns.time_signatures.add()
-      new_ts.time = 0.0
-      new_ts.numerator = 4
-      new_ts.denominator = 4
-
-  def _sanitize_tempos(self, ns):
-    """Normalize NoteSequence tempos to a single event at time 0."""
-    tempos = list(ns.tempos)
-    del ns.tempos[:]
-    chosen = None
-    for t in tempos:
-      if t.time <= 1e-3:
-        chosen = t
-        break
-    if chosen is None and tempos:
-      chosen = min(tempos, key=lambda x: x.time)
-    qpm = chosen.qpm if chosen is not None else 120.0
-    tempo = ns.tempos.add()
-    tempo.time = 0.0
-    tempo.qpm = qpm
-    return qpm
-
-
-class DrumsConverter(BaseNoteSequenceConverter):
-  """Converter for legacy drums with either pianoroll or one-hot tensors.
-
-  Inputs/outputs are either a "pianoroll"-like encoding of all possible drum
-  hits at a given step, or a one-hot encoding of the pianoroll.
-
-  The "roll" input encoding includes a final NOR bit (after the optional end
-  token).
-
-  Attributes:
-    max_bars: Optional maximum number of bars per extracted drums, before
-      slicing.
-    slice_bars: Optional size of window to slide over raw Melodies after
-      extraction.
-    gap_bars: If this many bars or more follow a non-empty drum event, the
-      drum track is ended. Disabled when set to 0 or None.
-    pitch_classes: A collection of collections, with each sub-collection
-      containing the set of pitches representing a single class to group by. By
-      default, groups valid drum pitches into 9 different classes.
-    add_end_token: Whether or not to add an end token. Recommended to be False
-      for fixed-length outputs.
-    steps_per_quarter: The number of quantization steps per quarter note.
-    quarters_per_bar: The number of quarter notes per bar.
-    pad_to_total_time: Pads each input/output tensor to the total time of the
-      NoteSequence.
-    roll_input: Whether to use a pianoroll-like representation as the input
-      instead of a one-hot encoding.
-    roll_output: Whether to use a pianoroll-like representation as the output
-      instead of a one-hot encoding.
-    max_tensors_per_notesequence: The maximum number of outputs to return
-      for each NoteSequence.
-    presplit_on_time_changes: Whether to split NoteSequence on time changes
-      before converting.
-  """
-
-  def __init__(self, max_bars=None, slice_bars=None, gap_bars=1.0,
-               pitch_classes=None, add_end_token=False, steps_per_quarter=4,
-               quarters_per_bar=4, pad_to_total_time=False, roll_input=False,
-               roll_output=False, max_tensors_per_notesequence=5,
-               presplit_on_time_changes=True):
-    self._pitch_classes = pitch_classes or REDUCED_DRUM_PITCH_CLASSES
-    self._pitch_class_map = {}
-    for i, pitches in enumerate(self._pitch_classes):
-      self._pitch_class_map.update({p: i for p in pitches})
-    self._steps_per_quarter = steps_per_quarter
-    self._steps_per_bar = steps_per_quarter * quarters_per_bar
-    self._slice_steps = self._steps_per_bar * slice_bars if slice_bars else None
-    self._pad_to_total_time = pad_to_total_time
-    self._roll_input = roll_input
-    self._roll_output = roll_output
-
-    self._drums_extractor_fn = functools.partial(
-        drum_pipelines.extract_drum_tracks,
-        min_bars=1,
-        gap_bars=gap_bars or float('inf'),
-        max_steps_truncate=self._steps_per_bar * max_bars if max_bars else None,
-        pad_end=True)
-
-    num_classes = len(self._pitch_classes)
-
-    self._pr_encoder_decoder = note_seq.PianorollEncoderDecoder(
-        input_size=num_classes + add_end_token)
-    # Use pitch classes as `drum_type_pitches` since we have already done the
-    # mapping.
-    self._oh_encoder_decoder = note_seq.MultiDrumOneHotEncoding(
-        drum_type_pitches=[(i,) for i in range(num_classes)])
-
-    if self._roll_output:
-      output_depth = num_classes + add_end_token
-    else:
-      output_depth = self._oh_encoder_decoder.num_classes + add_end_token
-
-    if self._roll_input:
-      input_depth = num_classes + 1 + add_end_token
-    else:
-      input_depth = self._oh_encoder_decoder.num_classes + add_end_token
-
-    super(DrumsConverter, self).__init__(
-        input_depth=input_depth,
-        input_dtype=bool,
-        output_depth=output_depth,
-        output_dtype=bool,
-        end_token=output_depth - 1 if add_end_token else None,
-        presplit_on_time_changes=presplit_on_time_changes,
-        max_tensors_per_notesequence=max_tensors_per_notesequence)
-
-  def _to_tensors_fn(self, note_sequence):
-    """Converts NoteSequence to unique sequences."""
-    try:
-      quantized_sequence = note_seq.quantize_note_sequence(
-          note_sequence, self._steps_per_quarter)
-      if (note_seq.steps_per_bar_in_quantized_sequence(quantized_sequence) !=
-          self._steps_per_bar):
-        return ConverterTensors()
-    except (note_seq.BadTimeSignatureError, note_seq.NonIntegerStepsPerBarError,
-            note_seq.NegativeTimeError):
-      return ConverterTensors()
-
-    new_notes = []
-    for n in quantized_sequence.notes:
-      if not n.is_drum:
-        continue
-      if n.pitch not in self._pitch_class_map:
-        continue
-      n.pitch = self._pitch_class_map[n.pitch]
-      new_notes.append(n)
-    del quantized_sequence.notes[:]
-    quantized_sequence.notes.extend(new_notes)
-
-    event_lists, unused_stats = self._drums_extractor_fn(quantized_sequence)
-
-    if self._pad_to_total_time:
-      for e in event_lists:
-        e.set_length(len(e) + e.start_step, from_left=True)
-        e.set_length(quantized_sequence.total_quantized_steps)
-    if self._slice_steps:
-      sliced_event_tuples = []
-      for l in event_lists:
-        for i in range(self._slice_steps, len(l) + 1, self._steps_per_bar):
-          sliced_event_tuples.append(tuple(l[i - self._slice_steps: i]))
-    else:
-      sliced_event_tuples = [tuple(l) for l in event_lists]
-
-    unique_event_tuples = list(set(sliced_event_tuples))
-    unique_event_tuples = maybe_sample_items(unique_event_tuples,
-                                             self.max_tensors_per_notesequence,
-                                             self.is_training)
-
-    rolls = []
-    oh_vecs = []
-    for t in unique_event_tuples:
-      if self._roll_input or self._roll_output:
-        if self.end_token is not None:
-          t_roll = list(t) + [(self._pr_encoder_decoder.input_size - 1,)]
-        else:
-          t_roll = t
-        rolls.append(np.vstack([
-            self._pr_encoder_decoder.events_to_input(t_roll, i).astype(bool)
-            for i in range(len(t_roll))]))
-      if not (self._roll_input and self._roll_output):
-        labels = [self._oh_encoder_decoder.encode_event(e) for e in t]
-        if self.end_token is not None:
-          labels += [self._oh_encoder_decoder.num_classes]
-        oh_vecs.append(np_onehot(
-            labels,
-            self._oh_encoder_decoder.num_classes + (self.end_token is not None),
-            bool))
-
-    if self._roll_input:
-      input_seqs = [
-          np.append(roll, np.expand_dims(np.all(roll == 0, axis=1), axis=1),
-                    axis=1) for roll in rolls]
-    else:
-      input_seqs = oh_vecs
-
-    output_seqs = rolls if self._roll_output else oh_vecs
-
-    return ConverterTensors(inputs=input_seqs, outputs=output_seqs)
-
-  def to_tensors(self, item):
-    note_sequence = item
-    return split_process_and_combine(note_sequence,
-                                     self._presplit_on_time_changes,
-                                     self.max_tensors_per_notesequence,
-                                     self.is_training, self._to_tensors_fn)
-
-  def from_tensors(self, samples, unused_controls=None):
-    output_sequences = []
-    for s in samples:
-      if self._roll_output:
-        if self.end_token is not None:
-          end_i = np.where(s[:, self.end_token])
-          if len(end_i):  # pylint: disable=g-explicit-length-test,len-as-condition
-            s = s[:end_i[0]]
-        events_list = [frozenset(np.where(e)[0]) for e in s]
-      else:
-        s = s  # np.argmax(s, axis=-1)
-        if self.end_token is not None and self.end_token in s:
-          s = s[:s.tolist().index(self.end_token)]
-        events_list = [self._oh_encoder_decoder.decode_event(e) for e in s]
-      # Map classes to exemplars.
-      events_list = [
-          frozenset(self._pitch_classes[c][0] for c in e) for e in events_list]
-      track = note_seq.DrumTrack(
-          events=events_list,
-          steps_per_bar=self._steps_per_bar,
-          steps_per_quarter=self._steps_per_quarter)
-      output_sequences.append(track.to_sequence(velocity=OUTPUT_VELOCITY))
-    return output_sequences
-
-
-class TrioConverter(BaseNoteSequenceConverter):
-  """Converts to/from 3-part (mel, drums, bass) multi-one-hot events.
-
-  Extracts overlapping segments with melody, drums, and bass (determined by
-  program number) and concatenates one-hot tensors from OneHotMelodyConverter
-  and OneHotDrumsConverter. Takes the cross products from the sets of
-  instruments of each type.
-
-  Attributes:
-    slice_bars: Optional size of window to slide over full converted tensor.
-    gap_bars: The number of consecutive empty bars to allow for any given
-      instrument. Note that this number is effectively doubled for internal
-      gaps.
-    max_bars: Optional maximum number of bars per extracted sequence, before
-      slicing.
-    steps_per_quarter: The number of quantization steps per quarter note.
-    quarters_per_bar: The number of quarter notes per bar.
-    max_tensors_per_notesequence: The maximum number of outputs to return
-      for each NoteSequence.
-    chord_encoding: An instantiated OneHotEncoding object to use for encoding
-      chords on which to condition, or None if not conditioning on chords.
-    condition_on_key: If True, condition on key; key is represented as a
-      depth-12 one-hot encoding.
-  """
-
-  class InstrumentType(object):
-    UNK = 0
-    MEL = 1
-    BASS = 2
-    DRUMS = 3
-    INVALID = 4
-
-  def __init__(
-      self, slice_bars=None, gap_bars=2, max_bars=1024, steps_per_quarter=4,
-      quarters_per_bar=4, max_tensors_per_notesequence=5,
-      chord_encoding=None, condition_on_key=False, presplit_on_time_changes=True):
-    self._melody_converter = OneHotMelodyConverter(
-        gap_bars=None, steps_per_quarter=steps_per_quarter,
-        pad_to_total_time=True, presplit_on_time_changes=False,
-        max_tensors_per_notesequence=None, chord_encoding=chord_encoding,
-        condition_on_key=condition_on_key)
-    self._drums_converter = DrumsConverter(
-        gap_bars=None, steps_per_quarter=steps_per_quarter,
-        pad_to_total_time=True, presplit_on_time_changes=False,
-        max_tensors_per_notesequence=None)
-    self._slice_bars = slice_bars
-    self._gap_bars = gap_bars
-    self._max_bars = max_bars
-    self._steps_per_quarter = steps_per_quarter
-    self._steps_per_bar = steps_per_quarter * quarters_per_bar
-    self._chord_encoding = chord_encoding
-    self._condition_on_key = condition_on_key
-
-    self._split_output_depths = (
-        self._melody_converter.output_depth,
-        self._melody_converter.output_depth,
-        self._drums_converter.output_depth)
-    output_depth = sum(self._split_output_depths)
-
-    self._program_map = dict(
-        [(i, TrioConverter.InstrumentType.MEL) for i in MEL_PROGRAMS] +
-        [(i, TrioConverter.InstrumentType.BASS) for i in BASS_PROGRAMS])
-
-    super(TrioConverter, self).__init__(
-        input_depth=output_depth,
-        input_dtype=bool,
-        output_depth=output_depth,
-        output_dtype=bool,
-        control_depth=self._melody_converter.control_depth,
-        control_dtype=self._melody_converter.control_dtype,
-        end_token=False,
-        presplit_on_time_changes=presplit_on_time_changes,
-        max_tensors_per_notesequence=max_tensors_per_notesequence)
-
-  def _to_tensors_fn(self, note_sequence):
-    """Converts a `NoteSequence` to `ConverterTensors` obj."""
-    try:
-      quantized_sequence = note_seq.quantize_note_sequence(
-          note_sequence, self._steps_per_quarter)
-      if (note_seq.steps_per_bar_in_quantized_sequence(quantized_sequence) !=
-          self._steps_per_bar):
-        return ConverterTensors()
-    except (note_seq.BadTimeSignatureError, note_seq.NonIntegerStepsPerBarError,
-            note_seq.NegativeTimeError):
-      return ConverterTensors()
-
-    if (self._chord_encoding and not any(
-        ta.annotation_type == CHORD_SYMBOL
-        for ta in quantized_sequence.text_annotations)) or (
-            self._condition_on_key and not quantized_sequence.key_signatures):
-      # We are conditioning on chords and/or key but sequence does not have
-      # them. Try to infer chords and optionally key.
-      try:
-        note_seq.infer_chords_for_sequence(
-            quantized_sequence, add_key_signatures=self._condition_on_key)
-      except note_seq.ChordInferenceError:
-        return ConverterTensors()
-
-      # The trio parts get extracted from the original NoteSequence, so copy the
-      # inferred chords and keys back to that one.
-      for qta in quantized_sequence.text_annotations:
-        if qta.annotation_type == CHORD_SYMBOL:
-          ta = note_sequence.text_annotations.add()
-          ta.annotation_type = CHORD_SYMBOL
-          ta.time = qta.time
-          ta.text = qta.text
-      for qks in quantized_sequence.key_signatures:
-        ks = note_sequence.key_signatures.add()
-        ks.time = qks.time
-        ks.key = qks.key
-
-    total_bars = int(
-        np.ceil(quantized_sequence.total_quantized_steps / self._steps_per_bar))
-    total_bars = min(total_bars, self._max_bars)
-
-    # Assign an instrument class for each instrument, and compute its coverage.
-    # If an instrument has multiple classes, it is considered INVALID.
-    instrument_type = np.zeros(MAX_INSTRUMENT_NUMBER + 1, np.uint8)
-    coverage = np.zeros((total_bars, MAX_INSTRUMENT_NUMBER + 1), bool)
-    for note in quantized_sequence.notes:
-      i = note.instrument
-      if i > MAX_INSTRUMENT_NUMBER:
-        #logging.warning('Skipping invalid instrument number: %d', i)
-        continue
-      if note.is_drum:
-        inferred_type = self.InstrumentType.DRUMS
-      else:
-        inferred_type = self._program_map.get(
-            note.program, self.InstrumentType.INVALID)
-      if not instrument_type[i]:
-        instrument_type[i] = inferred_type
-      elif instrument_type[i] != inferred_type:
-        instrument_type[i] = self.InstrumentType.INVALID
-
-      start_bar = note.quantized_start_step // self._steps_per_bar
-      end_bar = int(np.ceil(note.quantized_end_step / self._steps_per_bar))
-
-      if start_bar >= total_bars:
-        continue
-      coverage[start_bar:min(end_bar, total_bars), i] = True
-
-    # Group instruments by type.
-    instruments_by_type = collections.defaultdict(list)
-    for i, type_ in enumerate(instrument_type):
-      if type_ not in (self.InstrumentType.UNK, self.InstrumentType.INVALID):
-        instruments_by_type[type_].append(i)
-    if len(instruments_by_type) < 3:
-      # This NoteSequence doesn't have all 3 types.
-      return ConverterTensors()
-
-    # Encode individual instruments.
-    # Set total time so that instruments will be padded correctly.
-    note_sequence.total_time = (
-        total_bars * self._steps_per_bar *
-        60 / note_sequence.tempos[0].qpm / self._steps_per_quarter)
-    encoded_instruments = {}
-    encoded_controls = None
-    for i in (instruments_by_type[self.InstrumentType.MEL] +
-              instruments_by_type[self.InstrumentType.BASS]):
-      tensors = self._melody_converter.to_tensors(
-          _extract_instrument(note_sequence, i))
-      if tensors.outputs:
-        encoded_instruments[i] = tensors.outputs[0]
-        if encoded_controls is None:
-          encoded_controls = tensors.controls[0]
-        elif not np.array_equal(encoded_controls, tensors.controls[0]):
-          #logging.warning('Trio controls disagreement between instruments.')
-          pass
-      else:
-        coverage[:, i] = False
-    for i in instruments_by_type[self.InstrumentType.DRUMS]:
-      tensors = self._drums_converter.to_tensors(
-          _extract_instrument(note_sequence, i))
-      if tensors.outputs:
-        encoded_instruments[i] = tensors.outputs[0]
-      else:
-        coverage[:, i] = False
-
-    # Fill in coverage gaps up to self._gap_bars.
-    og_coverage = coverage.copy()
-    for j in range(total_bars):
-      coverage[j] = np.any(
-          og_coverage[
-              max(0, j-self._gap_bars):min(total_bars, j+self._gap_bars) + 1],
-          axis=0)
-
-    # Take cross product of instruments from each class and compute combined
-    # encodings where they overlap.
-    seqs = []
-    control_seqs = []
-    for grp in itertools.product(
-        instruments_by_type[self.InstrumentType.MEL],
-        instruments_by_type[self.InstrumentType.BASS],
-        instruments_by_type[self.InstrumentType.DRUMS]):
-      # Consider an instrument covered within gap_bars from the end if any of
-      # the other instruments are. This allows more leniency when re-encoding
-      # slices.
-      grp_coverage = np.all(coverage[:, grp], axis=1)
-      grp_coverage[:self._gap_bars] = np.any(coverage[:self._gap_bars, grp])
-      grp_coverage[-self._gap_bars:] = np.any(coverage[-self._gap_bars:, grp])
-      slice_bars = self._slice_bars if self._slice_bars else total_bars
-      for j in range(total_bars - slice_bars + 1):
-        if (np.all(grp_coverage[j:j + slice_bars]) and
-            all(i in encoded_instruments for i in grp)):
-          start_step = j * self._steps_per_bar
-          end_step = (j + slice_bars) * self._steps_per_bar
-          seqs.append(np.concatenate(
-              [encoded_instruments[i][start_step:end_step] for i in grp],
-              axis=-1))
-          if encoded_controls is not None:
-            control_seqs.append(encoded_controls[start_step:end_step])
-
-    return ConverterTensors(inputs=seqs, outputs=seqs, controls=control_seqs)
-
-  def to_tensors(self, item):
-    note_sequence = item
-    return split_process_and_combine(note_sequence,
-                                     self._presplit_on_time_changes,
-                                     self.max_tensors_per_notesequence,
-                                     self.is_training, self._to_tensors_fn)
-
-  def from_tensors(self, samples, controls=None):
-    output_sequences = []
-    dim_ranges = np.cumsum(self._split_output_depths)
-    for i, s in enumerate(samples):
-      mel_ns = self._melody_converter.from_tensors(
-          [s[:, 0]],
-          [controls[i]] if controls is not None else None)[0]
-      bass_ns = self._melody_converter.from_tensors(
-          [s[:, 1]])[0]
-      drums_ns = self._drums_converter.from_tensors(
-          [s[:, 2]])[0]
-
-      for n in bass_ns.notes:
-        n.instrument = 1
-        n.program = ELECTRIC_BASS_PROGRAM
-      for n in drums_ns.notes:
-        n.instrument = 9
-
-      ns = mel_ns
-      ns.notes.extend(bass_ns.notes)
-      ns.notes.extend(drums_ns.notes)
-      ns.total_time = max(
-          mel_ns.total_time, bass_ns.total_time, drums_ns.total_time)
-      output_sequences.append(ns)
-    return output_sequences
 
 def split_process_and_combine(note_sequence, split, sample_size, randomize,
                               to_tensors_fn):
@@ -1274,13 +867,16 @@ class POP909TrioConverter(BaseNoteSequenceConverter):
     self.last_chosen_tempo = None
 
     # Create a converter for each of the three tracks (melody-like encoding).
+    # Don't filter by instrument since we extract each track separately
     self._track_converter = OneHotMelodyConverter(
         gap_bars=None,
         steps_per_quarter=steps_per_quarter,
         quarters_per_bar=quarters_per_bar,
         pad_to_total_time=True,
         presplit_on_time_changes=False,
-        max_tensors_per_notesequence=None)
+        max_tensors_per_notesequence=None,
+        strict_tempo=strict_tempo,
+        instrument=None)
 
     # Output depth is 3x the melody encoding depth (concatenated).
     output_depth = self._track_converter.output_depth * 3
@@ -1360,60 +956,6 @@ class POP909TrioConverter(BaseNoteSequenceConverter):
 
     return ConverterTensors(inputs=seqs, outputs=seqs)
 
-  def _sanitize_time_signatures(self, ns):
-    """Normalize NoteSequence time signatures to a single 4/4 at time 0.
-
-    Many POP909 MIDIs include multiple time signatures at t=0 (e.g., 4/4 then
-    1/4) due to encoding artifacts. This method removes all time signature
-    changes and enforces a single 4/4 at the beginning to ensure integer
-    steps-per-bar during quantization.
-    """
-    # If there is already a 4/4 at or near t=0, keep it and drop others.
-    ts_list = list(ns.time_signatures)
-    del ns.time_signatures[:]
-    chosen = None
-    for ts in ts_list:
-      if ts.time <= 1e-3 and ts.numerator == 4 and ts.denominator == 4:
-        chosen = ts
-        break
-    if chosen is None:
-      # Create canonical 4/4 at t=0
-      chosen = ns.time_signatures.add()
-      chosen.time = 0.0
-      chosen.numerator = 4
-      chosen.denominator = 4
-    else:
-      # Re-add the chosen 4/4, normalized to t=0
-      new_ts = ns.time_signatures.add()
-      new_ts.time = 0.0
-      new_ts.numerator = 4
-      new_ts.denominator = 4
-    # Drop any subsequent time signature changes to keep a fixed bar size.
-
-  def _sanitize_tempos(self, ns):
-    """Normalize NoteSequence tempos to a single event at time 0.
-
-    Quantization in note_seq requires a constant tempo when using
-    `quantize_note_sequence` with fixed `steps_per_quarter`. POP909 often
-    includes slight tempo jitter curves. We select the tempo at t≈0 (or the
-    earliest tempo) and enforce it globally by removing subsequent changes.
-    """
-    tempos = list(ns.tempos)
-    del ns.tempos[:]
-    chosen = None
-    for t in tempos:
-      if t.time <= 1e-3:
-        chosen = t
-        break
-    if chosen is None and tempos:
-      # Pick earliest tempo event
-      chosen = min(tempos, key=lambda x: x.time)
-    qpm = chosen.qpm if chosen is not None else 120.0
-    tempo = ns.tempos.add()
-    tempo.time = 0.0
-    tempo.qpm = qpm
-    return qpm
-
   def to_tensors(self, item):
     note_sequence = item
     return split_process_and_combine(note_sequence,
@@ -1422,31 +964,359 @@ class POP909TrioConverter(BaseNoteSequenceConverter):
                                      self.is_training, self._to_tensors_fn)
 
   def from_tensors(self, samples, controls=None):
-    """Decodes combined tensors back into three NoteSequences and merges them."""
+    """
+    Decodes Trio indices (Column 0=Melody, 1=Bridge, 2=Piano) back to NoteSequence.
+    """
     output_sequences = []
-    depth_third = self._track_converter.output_depth
     
     for s in samples:
-      # Split the concatenated tensor back into three tracks.
-      mel_tensor = s[:, :depth_third]
-      bridge_tensor = s[:, depth_third:2*depth_third]
-      piano_tensor = s[:, 2*depth_third:]
+      # s shape is (Length, 3)
       
-      # Decode each track independently.
+      # 1. Extract Tracks (Flattening to 1D arrays)
+      # We use s[:, 0] instead of s[:, 0:1] to ensure we get shape (L,) not (L, 1)
+      mel_tensor = s[:, 0] 
+      bridge_tensor = s[:, 1]
+      piano_tensor = s[:, 2]
+
+      # 2. Decode each track separately using the sub-converter
+      # Note: We wrap them in a list [] because from_tensors expects a batch of samples
       mel_ns = self._track_converter.from_tensors([mel_tensor])[0]
       bridge_ns = self._track_converter.from_tensors([bridge_tensor])[0]
       piano_ns = self._track_converter.from_tensors([piano_tensor])[0]
-      
-      # Assign track indices and merge.
+
+      # 3. Assign Instruments
+      # Melody is already 0
       for n in bridge_ns.notes:
         n.instrument = 1
       for n in piano_ns.notes:
         n.instrument = 2
-      
+
+      # 4. Merge
       ns = mel_ns
       ns.notes.extend(bridge_ns.notes)
       ns.notes.extend(piano_ns.notes)
-      ns.total_time = max(mel_ns.total_time, bridge_ns.total_time, piano_ns.total_time)
+      
+      # Recalculate total time
+      if ns.notes:
+          ns.total_time = max(n.end_time for n in ns.notes)
+      
       output_sequences.append(ns)
+      
+    return output_sequences
+
+
+# ============================================================================
+# OCTUPLE CONVERTERS
+# ============================================================================
+
+class POP909OctupleMelodyConverter(BaseNoteSequenceConverter):
+  """
+  Octuple Melody converter aligned with the new Trio logic.
+  1. Uses split_process_and_combine to slice data into bars (e.g. 64).
+  2. Extracts Inst 0 (Melody) from the slice.
+  3. Encodes it directly (supporting potential polyphony).
+  """
+
+  def __init__(self, slice_bars=64, max_tensors_per_notesequence=5, gap_bars=None,
+               steps_per_quarter=4, quarters_per_bar=4, strict_tempo=False, presplit_on_time_changes=True):
+    self._oct_encoding = OctupleEncoding()
+    self._slice_bars = slice_bars
+    self._steps_per_quarter = steps_per_quarter
+    self._quarters_per_bar = quarters_per_bar
+    self._strict_tempo = strict_tempo
     
+    super(POP909OctupleMelodyConverter, self).__init__(
+        input_depth=1, input_dtype=object,
+        output_depth=1, output_dtype=object,
+        max_tensors_per_notesequence=max_tensors_per_notesequence,
+        presplit_on_time_changes=presplit_on_time_changes)
+
+  def _to_tensors_fn(self, note_sequence):
+    # 1. Sanitize & Quantize
+    try:
+      self._sanitize_time_signatures(note_sequence)
+    except Exception:
+      pass
+    if not self._strict_tempo:
+      try:
+        self.last_chosen_tempo = self._sanitize_tempos(note_sequence)
+      except Exception:
+        self.last_chosen_tempo = None
+    try:
+      quantized_sequence = note_seq.quantize_note_sequence(
+          note_sequence, self._steps_per_quarter)
+    except Exception:
+      return ConverterTensors()
+
+    # 2. Extract and Encode Melody (Track 0)
+    inst_ns = _extract_instrument(quantized_sequence, 0)
+    if len(inst_ns.notes) == 0:
+        return ConverterTensors()
+
+    try:
+        full_song = self._oct_encoding.encode_notesequence(inst_ns)
+    except Exception:
+        return ConverterTensors()
+
+    if len(full_song) == 0:
+        return ConverterTensors()
+    
+    # Set Instrument ID 0
+    full_song[:, 2] = 0
+    
+    # Sort
+    full_song = full_song[np.argsort(full_song[:, 0])]
+    full_song = full_song[np.argsort(full_song[:, 1], kind='stable')]
+
+    # 3. Deterministic Slicing with Stride
+    max_bar = full_song[:, 0].max()
+    min_bar = full_song[:, 0].min()
+    total_bars = max_bar - min_bar + 1
+    
+    stride = 32 # 50% overlap
+
+    sliced_outputs = []
+
+    if total_bars <= self._slice_bars:
+        slice_data = full_song.copy()
+        slice_data[:, 0] -= min_bar
+        sliced_outputs.append(slice_data.astype(np.int32))
+    else:
+        # Standard stride + Tail + Unique
+        valid_starts = np.arange(min_bar, max_bar - self._slice_bars + 1, stride)
+        last_possible_start = max_bar - self._slice_bars
+        valid_starts = np.append(valid_starts, last_possible_start)
+        valid_starts = np.unique(valid_starts)
+
+        for start_bar in valid_starts:
+            end_bar = start_bar + self._slice_bars
+            mask = (full_song[:, 0] >= start_bar) & (full_song[:, 0] < end_bar)
+            slice_data = full_song[mask].copy()
+            
+            if len(slice_data) > 0:
+                # CRITICAL: Shift Bar tokens
+                slice_data[:, 0] -= start_bar
+                sliced_outputs.append(slice_data.astype(np.int32))
+
+    if not sliced_outputs:
+        return ConverterTensors()
+
+    return ConverterTensors(inputs=sliced_outputs, outputs=sliced_outputs)
+  
+  def to_tensors(self, item):
+    note_sequence = item
+    return split_process_and_combine(note_sequence,
+                                     self._presplit_on_time_changes,
+                                     self.max_tensors_per_notesequence,
+                                     self.is_training, 
+                                     self._to_tensors_fn)
+
+  def from_tensors(self, samples, controls=None):
+    """
+    Converts Octuple token arrays back into NoteSequence objects.
+    """
+    output_sequences = []
+    
+    for i, s in enumerate(samples):
+        # 1. Decode Numpy Tokens -> MidiToolkit Object using OctupleEncoding
+        try:
+            midi_obj = self._oct_encoding.decode(s)
+        except Exception as e:
+            print(f"Error decoding Octuple sample {i}: {e}")
+            continue
+
+        # 2. Convert MidiToolkit -> NoteSequence via Temporary File
+        # We use a temp file because there is no direct bridge from miditoolkit -> NoteSequence
+        # delete=False is required to close the file before reading it back on some OSs (Windows)
+        with tempfile.NamedTemporaryFile(suffix='.mid', delete=False) as tmp:
+            temp_name = tmp.name
+        
+        try:
+            # Write MIDI to disk
+            midi_obj.dump(temp_name)
+            
+            # Read MIDI back as NoteSequence
+            with open(temp_name, 'rb') as f:
+                ns = note_seq.midi_to_note_sequence(f.read())
+            
+            output_sequences.append(ns)
+            
+        except Exception as e:
+            print(f"Error converting MIDI to NoteSequence for sample {i}: {e}")
+            # Append empty sequence on failure to keep alignment? 
+            # Or just skip. Here we return an empty sequence to prevent crashes.
+            output_sequences.append(note_seq.NoteSequence())
+            
+        finally:
+            # Cleanup
+            if os.path.exists(temp_name):
+                try:
+                    os.remove(temp_name)
+                except Exception:
+                    pass
+
+    return output_sequences
+
+class POP909OctupleTrioConverter(BaseNoteSequenceConverter):
+  """
+  Octuple Trio converter that aligns with the OneHot logic:
+  1. Uses split_process_and_combine to slice data into bars (e.g. 64).
+  2. Extracts Inst 0, 1, 2 from the slice.
+  3. Encodes them directly (supporting polyphony).
+  """
+
+  def __init__(self, slice_bars=64, max_tensors_per_notesequence=5, gap_bars=None,
+               steps_per_quarter=4, quarters_per_bar=4, strict_tempo=False, presplit_on_time_changes=True):
+    self._oct_encoding = OctupleEncoding()
+    self._slice_bars = slice_bars
+    self._steps_per_quarter = steps_per_quarter
+    self._quarters_per_bar = quarters_per_bar
+    self._strict_tempo = strict_tempo
+    
+    # Octuple uses 8 tokens per event; trio has 3 tracks. 
+    # Output depth/dims are handled by the encoding content, not fixed dimensions here.
+    super(POP909OctupleTrioConverter, self).__init__(
+        input_depth=1, input_dtype=object,
+        output_depth=1, output_dtype=object,
+        max_tensors_per_notesequence=max_tensors_per_notesequence,
+        presplit_on_time_changes=presplit_on_time_changes)
+
+  def _to_tensors_fn(self, note_sequence):
+    # 1. Sanitize & Quantize (Whole File)
+    try:
+      self._sanitize_time_signatures(note_sequence)
+    except Exception:
+      pass
+    if not self._strict_tempo:
+      try:
+        self.last_chosen_tempo = self._sanitize_tempos(note_sequence)
+      except Exception:
+        self.last_chosen_tempo = None
+    try:
+      quantized_sequence = note_seq.quantize_note_sequence(
+          note_sequence, self._steps_per_quarter)
+    except Exception:
+      return ConverterTensors()
+
+    # 2. Encode ALL tracks fully (Melody, Bridge, Piano)
+    track_encodings = []
+    for inst_idx in range(3):
+        inst_ns = _extract_instrument(quantized_sequence, inst_idx)
+        
+        # If a track is totally empty in the whole file, we can't make a valid Trio
+        if len(inst_ns.notes) == 0:
+             return ConverterTensors()
+
+        try:
+            encoding = self._oct_encoding.encode_notesequence(inst_ns)
+        except Exception:
+            return ConverterTensors()
+
+        if len(encoding) == 0:
+            return ConverterTensors()
+
+        # Set Instrument ID (Column 2)
+        encoding[:, 2] = inst_idx
+        track_encodings.append(encoding)
+
+    if len(track_encodings) != 3:
+        return ConverterTensors()
+
+    # 3. Merge into one giant sorted array
+    full_song = np.vstack(track_encodings)
+    # Sort by Bar (col 0), then Position (col 1)
+    full_song = full_song[np.argsort(full_song[:, 0])]
+    full_song = full_song[np.argsort(full_song[:, 1], kind='stable')]
+
+    # 4. Deterministic Slicing with Stride
+    max_bar = full_song[:, 0].max()
+    min_bar = full_song[:, 0].min()
+    total_bars = max_bar - min_bar + 1
+    
+    stride = 32  # 50% overlap for 64-bar slices
+
+    sliced_outputs = []
+
+    if total_bars <= self._slice_bars:
+        # Short song: Take one slice (0 to end)
+        slice_data = full_song.copy()
+        slice_data[:, 0] -= min_bar 
+        sliced_outputs.append(slice_data.astype(np.int32))
+    
+    else:
+        # Long song: Calculate all valid start points
+        # 1. Standard stride
+        valid_starts = np.arange(min_bar, max_bar - self._slice_bars + 1, stride)
+        
+        # 2. "Tail" Logic: Ensure we capture the very end of the song
+        last_possible_start = max_bar - self._slice_bars
+        valid_starts = np.append(valid_starts, last_possible_start)
+        
+        # 3. Remove duplicates (in case the stride landed exactly on the tail)
+        valid_starts = np.unique(valid_starts)
+
+        # 4. Extract every single valid slice
+        for start_bar in valid_starts:
+            end_bar = start_bar + self._slice_bars
+            
+            # Select rows
+            mask = (full_song[:, 0] >= start_bar) & (full_song[:, 0] < end_bar)
+            slice_data = full_song[mask].copy()
+            
+            if len(slice_data) > 0:
+                # CRITICAL: Shift Bar tokens so slice starts at Bar 0
+                slice_data[:, 0] -= start_bar
+                sliced_outputs.append(slice_data.astype(np.int32))
+
+    if not sliced_outputs:
+        return ConverterTensors()
+
+    # Return ALL slices found (Ignore max_tensors_per_notesequence limit)
+    return ConverterTensors(inputs=sliced_outputs, outputs=sliced_outputs)
+
+  def to_tensors(self, item):
+    """
+    Standard entry point. Uses split_process_and_combine to handle the 
+    slicing logic (sliding window) for us.
+    """
+    note_sequence = item
+    return split_process_and_combine(note_sequence,
+                                     self._presplit_on_time_changes,
+                                     self.max_tensors_per_notesequence,
+                                     self.is_training, 
+                                     self._to_tensors_fn)
+
+  def from_tensors(self, samples, controls=None):
+    """
+    Converts Octuple token arrays back into NoteSequence objects (Trio).
+    """
+    output_sequences = []
+    
+    for i, s in enumerate(samples):
+        try:
+            # 1. Decode (Handles Melody, Bridge, Piano reconstruction internally)
+            midi_obj = self._oct_encoding.decode(s)
+        except Exception as e:
+            print(f"Error decoding Octuple Trio sample {i}: {e}")
+            continue
+
+        # 2. Convert to NoteSequence
+        with tempfile.NamedTemporaryFile(suffix='.mid', delete=False) as tmp:
+            temp_name = tmp.name
+        
+        try:
+            midi_obj.dump(temp_name)
+            with open(temp_name, 'rb') as f:
+                ns = note_seq.midi_to_note_sequence(f.read())
+            output_sequences.append(ns)
+        except Exception as e:
+            print(f"Error converting Trio MIDI to NoteSequence for sample {i}: {e}")
+            output_sequences.append(note_seq.NoteSequence())
+        finally:
+            if os.path.exists(temp_name):
+                try:
+                    os.remove(temp_name)
+                except Exception:
+                    pass
+
     return output_sequences
