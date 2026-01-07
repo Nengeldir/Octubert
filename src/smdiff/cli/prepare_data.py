@@ -48,8 +48,10 @@ def process_midi_file(args):
             ns = midi_to_note_sequence(content)
             tensors = converter.to_tensors(ns).outputs
             result = list(tensors)
-    except Exception:
-        # Skip problematic files silently to keep large batch runs flowing
+            if not result:
+                print(f"No sequences extracted from {midi_path}")
+    except Exception as e:
+        print(f"Error processing {midi_path}: {e}")
         pass
     return result
 
