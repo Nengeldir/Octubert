@@ -1198,7 +1198,7 @@ class POP909TrioConverter(BaseNoteSequenceConverter):
 
   def __init__(self, slice_bars=None, max_bars=1024, steps_per_quarter=4,
                quarters_per_bar=4, max_tensors_per_notesequence=5,
-               presplit_on_time_changes=True, gap_bars=None):
+               presplit_on_time_changes=True, gap_bars=None, strict_tempo=False):
     """Initialize a POP909TrioConverter.
 
     Args:
@@ -1214,6 +1214,8 @@ class POP909TrioConverter(BaseNoteSequenceConverter):
     self._max_bars = max_bars
     self._steps_per_quarter = steps_per_quarter
     self._steps_per_bar = steps_per_quarter * quarters_per_bar
+    self._strict_tempo = strict_tempo
+    self.last_chosen_tempo = None
 
     # Create a converter for each of the three tracks (melody-like encoding).
     self._track_converter = OneHotMelodyConverter(
@@ -1249,6 +1251,14 @@ class POP909TrioConverter(BaseNoteSequenceConverter):
     except Exception:
       # If sanitation fails, continue; quantization may still succeed.
       pass
+    # Enforce a single tempo at t=0 to avoid MultipleTempo errors during
+    # quantization. POP909 provides detailed tempo curves; for fixed-grid
+    # quantization we clamp to the first tempo.
+    if not self._strict_tempo:
+      try:
+        self.last_chosen_tempo = self._sanitize_tempos(note_sequence)
+      except Exception:
+        self.last_chosen_tempo = None
     try:
       quantized_sequence = note_seq.quantize_note_sequence(
           note_sequence, self._steps_per_quarter)
@@ -1323,6 +1333,30 @@ class POP909TrioConverter(BaseNoteSequenceConverter):
       new_ts.numerator = 4
       new_ts.denominator = 4
     # Drop any subsequent time signature changes to keep a fixed bar size.
+
+  def _sanitize_tempos(self, ns):
+    """Normalize NoteSequence tempos to a single event at time 0.
+
+    Quantization in note_seq requires a constant tempo when using
+    `quantize_note_sequence` with fixed `steps_per_quarter`. POP909 often
+    includes slight tempo jitter curves. We select the tempo at t≈0 (or the
+    earliest tempo) and enforce it globally by removing subsequent changes.
+    """
+    tempos = list(ns.tempos)
+    del ns.tempos[:]
+    chosen = None
+    for t in tempos:
+      if t.time <= 1e-3:
+        chosen = t
+        break
+    if chosen is None and tempos:
+      # Pick earliest tempo event
+      chosen = min(tempos, key=lambda x: x.time)
+    qpm = chosen.qpm if chosen is not None else 120.0
+    tempo = ns.tempos.add()
+    tempo.time = 0.0
+    tempo.qpm = qpm
+    return qpm
 
   def to_tensors(self, item):
     note_sequence = item

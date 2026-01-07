@@ -20,24 +20,34 @@ TOKENIZER_CLASS_MAP = {
 }
 
 
-def _make_converter(tokenizer_id: str, bars: int, max_t_per_ns: int):
+def _make_converter(tokenizer_id: str, bars: int, max_t_per_ns: int, strict_tempo: bool = False):
     spec = resolve_tokenizer_id(tokenizer_id)
     if tokenizer_id not in TOKENIZER_CLASS_MAP:
         raise ValueError(f"Tokenizer '{tokenizer_id}' not supported for MIDI extraction.")
     converter_cls = TOKENIZER_CLASS_MAP[tokenizer_id]
     # slice_bars controls segment length; disable gaps and pre-splitting
-    return converter_cls(
-        slice_bars=bars,
-        max_tensors_per_notesequence=max_t_per_ns,
-        gap_bars=None,
-        presplit_on_time_changes=False,
-    )
+    try:
+        return converter_cls(
+            slice_bars=bars,
+            max_tensors_per_notesequence=max_t_per_ns,
+            gap_bars=None,
+            presplit_on_time_changes=False,
+            strict_tempo=strict_tempo,
+        )
+    except TypeError:
+        # Converter does not accept strict_tempo
+        return converter_cls(
+            slice_bars=bars,
+            max_tensors_per_notesequence=max_t_per_ns,
+            gap_bars=None,
+            presplit_on_time_changes=False,
+        )
 
 
 def process_midi_file(args):
     """Worker function for processing a single MIDI file."""
-    midi_path, tokenizer_id, bars, max_t_per_ns = args
-    converter = _make_converter(tokenizer_id, bars, max_t_per_ns)
+    midi_path, tokenizer_id, bars, max_t_per_ns, strict_tempo = args
+    converter = _make_converter(tokenizer_id, bars, max_t_per_ns, strict_tempo)
 
     result = []
     try:
@@ -50,6 +60,10 @@ def process_midi_file(args):
             result = list(tensors)
             if not result:
                 print(f"No sequences extracted from {midi_path}")
+            # Log chosen tempo when sanitizer is active (trio converter)
+            chosen = getattr(converter, "last_chosen_tempo", None)
+            if chosen is not None:
+                print(f"Tempo chosen for {midi_path}: {chosen:.2f} qpm")
     except Exception as e:
         print(f"Error processing {midi_path}: {e}")
         pass
@@ -62,7 +76,8 @@ def load_dataset(root_dir: str,
                  max_tensors_per_ns: int = 5,
                  cache_path: str | None = None,
                  limit: int = 0,
-                 num_workers: int | None = None):
+                 num_workers: int | None = None,
+                 strict_tempo: bool = False):
     """
     Load and process a dataset of MIDI files into a NumPy cache.
 
@@ -93,7 +108,7 @@ def load_dataset(root_dir: str,
 
     print(f"Processing {len(all_midis)} MIDI files from {root_dir} with tokenizer={tokenizer_id}, bars={bars}")
 
-    worker_args = [(str(m), tokenizer_id, bars, max_tensors_per_ns) for m in all_midis]
+    worker_args = [(str(m), tokenizer_id, bars, max_tensors_per_ns, strict_tempo) for m in all_midis]
     if num_workers is None:
         num_workers = min(40, os.cpu_count() or 4)
 
@@ -123,6 +138,7 @@ def main():
     parser.add_argument("--bars", type=int, default=64, help="Sequence length in bars")
     parser.add_argument("--max_tensors_per_ns", type=int, default=5, help="Max tensors extracted per MIDI")
     parser.add_argument("--workers", type=int, default=None, help="Number of worker processes")
+    parser.add_argument("--strict_tempo", action="store_true", help="Do not sanitize tempo; respect original tempo curve")
 
     args = parser.parse_args()
 
@@ -141,6 +157,7 @@ def main():
         cache_path=args.target,
         limit=args.limit,
         num_workers=args.workers,
+        strict_tempo=args.strict_tempo,
     )
 
 
