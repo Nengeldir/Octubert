@@ -11,12 +11,12 @@ from note_seq import midi_to_note_sequence
 from tqdm import tqdm
 
 from ..tokenizers.registry import resolve_tokenizer_id
-from ..preprocessing import OneHotMelodyConverter, TrioConverter
+from ..preprocessing import OneHotMelodyConverter, POP909TrioConverter
 
 
 TOKENIZER_CLASS_MAP = {
     "melody_onehot": OneHotMelodyConverter,
-    "trio_onehot": TrioConverter,
+    "trio_onehot": POP909TrioConverter,
 }
 
 
@@ -81,7 +81,11 @@ def load_dataset(root_dir: str,
     if not root_path.exists():
         raise FileNotFoundError(f"Root directory not found: {root_dir}")
 
-    all_midis = sorted(root_path.rglob("*.mid"))
+    exclude_dirs = {"versions"}
+    all_midis = [
+        m for m in sorted(root_path.rglob("*.mid"))
+        if not any(part.lower() in exclude_dirs for part in m.parts)
+    ]
     if limit > 0:
         all_midis = all_midis[:limit]
 

@@ -1178,3 +1178,145 @@ def split_process_and_combine(note_sequence, split, sample_size, randomize,
     else:
       results.append(ConverterTensors())
   return combine_converter_tensors(results, sample_size, randomize)
+
+
+class POP909TrioConverter(BaseNoteSequenceConverter):
+  """Converter for POP909 3-track (MELODY, BRIDGE, PIANO) arrangements.
+
+  Extracts tracks 0 (MELODY), 1 (BRIDGE), and 2 (PIANO) from a NoteSequence
+  and concatenates their one-hot melody encodings along the feature axis.
+
+  Attributes:
+    slice_bars: Optional size of window to slide over full converted tensor.
+    max_bars: Optional maximum number of bars per extracted sequence, before
+      slicing.
+    steps_per_quarter: The number of quantization steps per quarter note.
+    quarters_per_bar: The number of quarter notes per bar.
+    max_tensors_per_notesequence: The maximum number of outputs to return
+      for each NoteSequence.
+  """
+
+  def __init__(self, slice_bars=None, max_bars=1024, steps_per_quarter=4,
+               quarters_per_bar=4, max_tensors_per_notesequence=5,
+               presplit_on_time_changes=True):
+    """Initialize a POP909TrioConverter.
+
+    Args:
+      slice_bars: Optional window size in bars to slide over full tensor.
+      max_bars: Maximum bars per extracted sequence before slicing.
+      steps_per_quarter: Quantization steps per quarter note.
+      quarters_per_bar: Quarter notes per bar.
+      max_tensors_per_notesequence: Max outputs per NoteSequence.
+      presplit_on_time_changes: Whether to split on time changes before converting.
+    """
+    self._slice_bars = slice_bars
+    self._max_bars = max_bars
+    self._steps_per_quarter = steps_per_quarter
+    self._steps_per_bar = steps_per_quarter * quarters_per_bar
+
+    # Create a converter for each of the three tracks (melody-like encoding).
+    self._track_converter = OneHotMelodyConverter(
+        gap_bars=None,
+        steps_per_quarter=steps_per_quarter,
+        quarters_per_bar=quarters_per_bar,
+        pad_to_total_time=True,
+        presplit_on_time_changes=False,
+        max_tensors_per_notesequence=None)
+
+    # Output depth is 3x the melody encoding depth (concatenated).
+    output_depth = self._track_converter.output_depth * 3
+
+    super(POP909TrioConverter, self).__init__(
+        input_depth=output_depth,
+        input_dtype=bool,
+        output_depth=output_depth,
+        output_dtype=bool,
+        control_depth=0,
+        control_dtype=bool,
+        end_token=False,
+        presplit_on_time_changes=presplit_on_time_changes,
+        max_tensors_per_notesequence=max_tensors_per_notesequence)
+
+  def _to_tensors_fn(self, note_sequence):
+    """Converts a `NoteSequence` to `ConverterTensors` by concatenating 3 tracks."""
+    try:
+      quantized_sequence = note_seq.quantize_note_sequence(
+          note_sequence, self._steps_per_quarter)
+      if (note_seq.steps_per_bar_in_quantized_sequence(quantized_sequence) !=
+          self._steps_per_bar):
+        return ConverterTensors()
+    except (note_seq.BadTimeSignatureError, note_seq.NonIntegerStepsPerBarError,
+            note_seq.NegativeTimeError):
+      return ConverterTensors()
+
+    # Set total time for consistent padding.
+    total_bars = int(
+        np.ceil(quantized_sequence.total_quantized_steps / self._steps_per_bar))
+    total_bars = min(total_bars, self._max_bars)
+    note_sequence.total_time = (
+        total_bars * self._steps_per_bar *
+        60 / note_sequence.tempos[0].qpm / self._steps_per_quarter)
+
+    # Extract the three tracks (0=MELODY, 1=BRIDGE, 2=PIANO).
+    track_tensors = []
+    for track_idx in range(3):
+      # Create a NoteSequence with only notes from this track.
+      track_ns = _extract_instrument(note_sequence, track_idx)
+      tensors = self._track_converter.to_tensors(track_ns)
+      if tensors.outputs:
+        track_tensors.append(tensors.outputs[0])
+      else:
+        # If a track is empty, return no sequences (trio requires all 3).
+        return ConverterTensors()
+
+    # Concatenate the three tracks along the feature axis.
+    seqs = []
+    if len(track_tensors) == 3 and all(len(t) == len(track_tensors[0]) for t in track_tensors):
+      combined = np.concatenate(track_tensors, axis=-1)
+      
+      # Optionally slice the combined tensor.
+      if self._slice_bars:
+        slice_steps = self._slice_bars * self._steps_per_bar
+        for j in range(0, len(combined) - slice_steps + 1, self._steps_per_bar):
+          seqs.append(combined[j:j + slice_steps])
+      else:
+        seqs.append(combined)
+
+    return ConverterTensors(inputs=seqs, outputs=seqs)
+
+  def to_tensors(self, item):
+    note_sequence = item
+    return split_process_and_combine(note_sequence,
+                                     self._presplit_on_time_changes,
+                                     self.max_tensors_per_notesequence,
+                                     self.is_training, self._to_tensors_fn)
+
+  def from_tensors(self, samples, controls=None):
+    """Decodes combined tensors back into three NoteSequences and merges them."""
+    output_sequences = []
+    depth_third = self._track_converter.output_depth
+    
+    for s in samples:
+      # Split the concatenated tensor back into three tracks.
+      mel_tensor = s[:, :depth_third]
+      bridge_tensor = s[:, depth_third:2*depth_third]
+      piano_tensor = s[:, 2*depth_third:]
+      
+      # Decode each track independently.
+      mel_ns = self._track_converter.from_tensors([mel_tensor])[0]
+      bridge_ns = self._track_converter.from_tensors([bridge_tensor])[0]
+      piano_ns = self._track_converter.from_tensors([piano_tensor])[0]
+      
+      # Assign track indices and merge.
+      for n in bridge_ns.notes:
+        n.instrument = 1
+      for n in piano_ns.notes:
+        n.instrument = 2
+      
+      ns = mel_ns
+      ns.notes.extend(bridge_ns.notes)
+      ns.notes.extend(piano_ns.notes)
+      ns.total_time = max(mel_ns.total_time, bridge_ns.total_time, piano_ns.total_time)
+      output_sequences.append(ns)
+    
+    return output_sequences

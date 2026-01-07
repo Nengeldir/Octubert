@@ -2,11 +2,13 @@
 
 from .data import (
     OneHotMelodyConverter,
-    TrioConverter
+    TrioConverter,
+    POP909TrioConverter
 )
 
 
 __all__ = [
     'OneHotMelodyConverter',
-    'TrioConverter'
+    'TrioConverter',
+    'POP909TrioConverter'
 ]
