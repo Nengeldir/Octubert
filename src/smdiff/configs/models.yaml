@@ -18,7 +18,7 @@ schmu_tx_vae:
 octuple_ddpm:
   model: octuple_ddpm
   internal_model: octuple_ddpm
-  tracks: octuple
+  tracks: trio_octuple
   bars: 64
   NOTES: 1024
   codebook_size: [2048, 128, 129, 256, 128, 32, 256, 49]
@@ -28,7 +28,7 @@ octuple_ddpm:
 octuple_mask_ddpm:
   model: octuple_mask_ddpm
   internal_model: octuple_mask_ddpm
-  tracks: octuple
+  tracks: trio_octuple
   bars: 64
   NOTES: 1024
   codebook_size: [2048, 128, 129, 256, 128, 32, 256, 49]
@@ -38,5 +38,6 @@ octuple_mask_ddpm:
 musicbert_ddpm:
   model: musicbert_ddpm
   internal_model: musicbert_ddpm
+  tracks: trio_octuple
   available: false
   notes: Model not implemented in this fork yet.

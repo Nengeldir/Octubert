@@ -126,7 +126,7 @@ def main():
             f"Dataset not found at '{dataset_path}'. Set --dataset_id or --dataset_path to an existing location."
         )
 
-    tokenizer_id = cfg.get("tokenizer_id") or cfg.get("tracks", "melody")
+    tokenizer_id = cfg.get("tokenizer_id") or cfg.get("tracks", "melody_onehot")
     resolve_tokenizer_id(tokenizer_id)
 
     masking_strategy = cfg.get("masking_strategy") or ns.strategy
@@ -147,6 +147,7 @@ def main():
     # Enrich hparams for logging/visibility
     H.tokenizer_id = tokenizer_id
     H.dataset_id = ns.dataset_id
+    H.model_id = ns.model  # Store canonical model_id for registry lookup
 
     # Standardize run directory to runs/{model_id}
     H.log_dir = os.path.join("runs", ns.model)

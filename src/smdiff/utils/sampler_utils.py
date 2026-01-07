@@ -21,10 +21,12 @@ def get_sampler(H):
         AbsorbingDiffusion sampler with appropriate denoising model
     """
     # Resolve model_id to get ModelSpec with factory
+    # Prefer canonical model_id over internal model name
+    model_id = getattr(H, 'model_id', None) or H.model
     try:
-        model_spec = resolve_model_id(H.model)
+        model_spec = resolve_model_id(model_id)
     except (ValueError, AttributeError):
-        raise ValueError(f"Unknown model id '{H.model}'")
+        raise ValueError(f"Unknown model id '{model_id}'")
     
     # Use the factory function from the registry
     if model_spec.factory is None:

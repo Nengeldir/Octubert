@@ -9,7 +9,7 @@ pt_encoder_path = os.path.join(current_dir, 'PT_encoder_musicBERT')
 if pt_encoder_path not in sys.path:
     sys.path.append(pt_encoder_path)
 
-from musicbert import MusicBERT, MusicBERTConfig
+from src.smdiff.models.musicbert import MusicBERT, MusicBERTConfig
 
 class MusicBERTDiffusion(nn.Module):
     def __init__(self, H):
