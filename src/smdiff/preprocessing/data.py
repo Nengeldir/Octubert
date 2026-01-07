@@ -1240,6 +1240,15 @@ class POP909TrioConverter(BaseNoteSequenceConverter):
 
   def _to_tensors_fn(self, note_sequence):
     """Converts a `NoteSequence` to `ConverterTensors` by concatenating 3 tracks."""
+    # Sanitize spurious time signature changes at t=0 (e.g., 4/4 -> 1/4).
+    # POP909 arrangements are intended to be in 4/4. Some MIDIs carry
+    # artifacts declaring 1/4 or 2/4 at t=0 which break quantization.
+    # We normalize to a single 4/4 time signature at t=0.
+    try:
+      self._sanitize_time_signatures(note_sequence)
+    except Exception:
+      # If sanitation fails, continue; quantization may still succeed.
+      pass
     try:
       quantized_sequence = note_seq.quantize_note_sequence(
           note_sequence, self._steps_per_quarter)
@@ -1284,6 +1293,36 @@ class POP909TrioConverter(BaseNoteSequenceConverter):
         seqs.append(combined)
 
     return ConverterTensors(inputs=seqs, outputs=seqs)
+
+  def _sanitize_time_signatures(self, ns):
+    """Normalize NoteSequence time signatures to a single 4/4 at time 0.
+
+    Many POP909 MIDIs include multiple time signatures at t=0 (e.g., 4/4 then
+    1/4) due to encoding artifacts. This method removes all time signature
+    changes and enforces a single 4/4 at the beginning to ensure integer
+    steps-per-bar during quantization.
+    """
+    # If there is already a 4/4 at or near t=0, keep it and drop others.
+    ts_list = list(ns.time_signatures)
+    del ns.time_signatures[:]
+    chosen = None
+    for ts in ts_list:
+      if ts.time <= 1e-3 and ts.numerator == 4 and ts.denominator == 4:
+        chosen = ts
+        break
+    if chosen is None:
+      # Create canonical 4/4 at t=0
+      chosen = ns.time_signatures.add()
+      chosen.time = 0.0
+      chosen.numerator = 4
+      chosen.denominator = 4
+    else:
+      # Re-add the chosen 4/4, normalized to t=0
+      new_ts = ns.time_signatures.add()
+      new_ts.time = 0.0
+      new_ts.numerator = 4
+      new_ts.denominator = 4
+    # Drop any subsequent time signature changes to keep a fixed bar size.
 
   def to_tensors(self, item):
     note_sequence = item
