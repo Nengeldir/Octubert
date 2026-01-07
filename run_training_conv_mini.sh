@@ -12,6 +12,9 @@ set -euo pipefail
 
 source .venv/bin/activate
 
+# Ensure Python can import top-level repo packages when running scripts by path
+export PYTHONPATH="$PWD:${PYTHONPATH:-}"
+
 nvidia-smi || true
 echo "Starting conv mini training on $(hostname)"
 echo "Date: $(date)"
