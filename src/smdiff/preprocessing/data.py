@@ -647,6 +647,7 @@ class OneHotMelodyConverter(LegacyEventListOneHotConverter):
           depth-12 one-hot encoding.
       dedupe_event_lists: If True, only keep unique events in the extracted
           event list.
+      strict_tempo: If False, sanitize tempo/time sig; if True, keep original.
     """
     self._min_pitch = min_pitch
     self._max_pitch = max_pitch
@@ -706,6 +707,11 @@ class OneHotMelodyConverter(LegacyEventListOneHotConverter):
         self.last_chosen_tempo = self._sanitize_tempos(note_sequence)
       except Exception:
         self.last_chosen_tempo = None
+    
+    # Filter to instrument 0 (MELODY track in POP909: MELODY=0, BRIDGE=1, PIANO=2)
+    notes = [n for n in note_sequence.notes if n.instrument == 0]
+    del note_sequence.notes[:]
+    note_sequence.notes.extend(notes)
     
     def is_valid(note):
       if (self._valid_programs is not None and
