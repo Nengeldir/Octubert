@@ -1,0 +1,42 @@
+# Per-model overrides relative to base.yaml
+
+schmu_conv_vae:
+  model: schmu_conv_vae
+  internal_model: conv_transformer
+  bert_n_emb: 512
+  conv_layers: 1
+  conv_len: 4
+  codebook_size: [90]
+  latent_shape: [1024,1]
+
+schmu_tx_vae:
+  model: schmu_tx_vae
+  internal_model: transformer
+  codebook_size: [90]
+  latent_shape: [1024,1]
+
+octuple_ddpm:
+  model: octuple_ddpm
+  internal_model: octuple_ddpm
+  tracks: octuple
+  bars: 64
+  NOTES: 1024
+  codebook_size: [2048, 128, 129, 256, 128, 32, 256, 49]
+  latent_shape: [1024, 8]
+  augment: false
+
+octuple_mask_ddpm:
+  model: octuple_mask_ddpm
+  internal_model: octuple_mask_ddpm
+  tracks: octuple
+  bars: 64
+  NOTES: 1024
+  codebook_size: [2048, 128, 129, 256, 128, 32, 256, 49]
+  latent_shape: [1024, 8]
+  augment: false
+
+musicbert_ddpm:
+  model: musicbert_ddpm
+  internal_model: musicbert_ddpm
+  available: false
+  notes: Model not implemented in this fork yet.

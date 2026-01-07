@@ -1,0 +1,142 @@
+"""Prepare POP909 datasets into NumPy caches (melody/trio)."""
+import argparse
+import os
+import warnings
+from functools import partial
+from multiprocessing import Pool
+from pathlib import Path
+
+import numpy as np
+from note_seq import midi_to_note_sequence
+from tqdm import tqdm
+
+from ..tokenizers.registry import resolve_tokenizer_id
+from ..preprocessing import OneHotMelodyConverter, TrioConverter
+
+
+TOKENIZER_CLASS_MAP = {
+    "melody_onehot": OneHotMelodyConverter,
+    "trio_onehot": TrioConverter,
+}
+
+
+def _make_converter(tokenizer_id: str, bars: int, max_t_per_ns: int):
+    spec = resolve_tokenizer_id(tokenizer_id)
+    if tokenizer_id not in TOKENIZER_CLASS_MAP:
+        raise ValueError(f"Tokenizer '{tokenizer_id}' not supported for MIDI extraction.")
+    converter_cls = TOKENIZER_CLASS_MAP[tokenizer_id]
+    # slice_bars controls segment length; disable gaps and pre-splitting
+    return converter_cls(
+        slice_bars=bars,
+        max_tensors_per_notesequence=max_t_per_ns,
+        gap_bars=None,
+        presplit_on_time_changes=False,
+    )
+
+
+def process_midi_file(args):
+    """Worker function for processing a single MIDI file."""
+    midi_path, tokenizer_id, bars, max_t_per_ns = args
+    converter = _make_converter(tokenizer_id, bars, max_t_per_ns)
+
+    result = []
+    try:
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+            with open(midi_path, "rb") as f:
+                content = f.read()
+            ns = midi_to_note_sequence(content)
+            tensors = converter.to_tensors(ns).outputs
+            result = list(tensors)
+    except Exception:
+        # Skip problematic files silently to keep large batch runs flowing
+        pass
+    return result
+
+
+def load_dataset(root_dir: str,
+                 tokenizer_id: str = "melody_onehot",
+                 bars: int = 64,
+                 max_tensors_per_ns: int = 5,
+                 cache_path: str | None = None,
+                 limit: int = 0,
+                 num_workers: int | None = None):
+    """
+    Load and process a dataset of MIDI files into a NumPy cache.
+
+    Args:
+        root_dir: Directory containing MIDI files (searched recursively).
+        tokenizer_id: 'melody_onehot' or 'trio_onehot'.
+        bars: Number of bars per slice.
+        max_tensors_per_ns: Max segments extracted per MIDI file.
+        cache_path: Optional .npy cache path for saving/loading.
+        limit: Limit number of files processed (0 = no limit).
+        num_workers: Worker processes (defaults to min(40, cpu_count)).
+    """
+    if cache_path and os.path.exists(cache_path):
+        print(f"Loading cached dataset from {cache_path}...")
+        return np.load(cache_path, allow_pickle=True)
+
+    root_path = Path(root_dir)
+    if not root_path.exists():
+        raise FileNotFoundError(f"Root directory not found: {root_dir}")
+
+    all_midis = sorted(root_path.rglob("*.mid"))
+    if limit > 0:
+        all_midis = all_midis[:limit]
+
+    print(f"Processing {len(all_midis)} MIDI files from {root_dir} with tokenizer={tokenizer_id}, bars={bars}")
+
+    worker_args = [(str(m), tokenizer_id, bars, max_tensors_per_ns) for m in all_midis]
+    if num_workers is None:
+        num_workers = min(40, os.cpu_count() or 4)
+
+    result: list[np.ndarray] = []
+    with Pool(num_workers) as pool:
+        for file_res in tqdm(pool.imap(process_midi_file, worker_args), total=len(worker_args)):
+            result.extend(file_res)
+
+    print(f"Extracted {len(result)} sequences.")
+
+    if cache_path:
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        print(f"Saving to {cache_path}...")
+        np.save(cache_path, result)
+
+    return np.array(result, dtype=object)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Prepare POP909 melody/trio datasets (combined .npy)")
+    parser.add_argument("--root_dir", type=str, default="data/POP909", help="Root directory of the dataset")
+    parser.add_argument("--tokenizer_id", type=str, default="melody_onehot",
+                        choices=["melody_onehot", "trio_onehot"],
+                        help="Tokenizer to use for extraction")
+    parser.add_argument("--target", type=str, default=None, help="Output .npy file (defaults per tokenizer)")
+    parser.add_argument("--limit", type=int, default=0, help="Limit number of files to process")
+    parser.add_argument("--bars", type=int, default=64, help="Sequence length in bars")
+    parser.add_argument("--max_tensors_per_ns", type=int, default=5, help="Max tensors extracted per MIDI")
+    parser.add_argument("--workers", type=int, default=None, help="Number of worker processes")
+
+    args = parser.parse_args()
+
+    # Sensible defaults for targets
+    if args.target is None:
+        if args.tokenizer_id == "trio_onehot":
+            args.target = "data/POP909_trio.npy"
+        else:
+            args.target = "data/POP909_melody.npy"
+
+    load_dataset(
+        root_dir=args.root_dir,
+        tokenizer_id=args.tokenizer_id,
+        bars=args.bars,
+        max_tensors_per_ns=args.max_tensors_per_ns,
+        cache_path=args.target,
+        limit=args.limit,
+        num_workers=args.workers,
+    )
+
+
+if __name__ == "__main__":
+    main()

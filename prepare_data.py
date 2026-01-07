@@ -93,14 +93,18 @@ def load_dataset(root_dir, mode='melody', bars=64, max_tensors_per_ns=5, cache_p
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Prepare dataset for Octubert")
+    parser = argparse.ArgumentParser(description="Prepare POP909 melody/trio datasets (combined .npy)")
     parser.add_argument("--root_dir", type=str, default="data/POP909", help="Root directory of the dataset")
     parser.add_argument("--mode", type=str, default="melody", choices=['melody', 'trio'], help="Extraction mode")
-    parser.add_argument("--target", type=str, default="data/POP909_melody.npy", help="Output .npy file")
+    parser.add_argument("--target", type=str, default=None, help="Output .npy file (defaults per mode)")
     parser.add_argument("--limit", type=int, default=0, help="Limit number of files to process")
     parser.add_argument("--bars", type=int, default=64, help="Sequence length in bars")
 
     args = parser.parse_args()
+
+    # Sensible defaults for targets
+    if args.target is None:
+        args.target = "data/POP909_melody.npy" if args.mode == "melody" else "data/POP909_trio.npy"
 
     load_dataset(
         root_dir=args.root_dir,
