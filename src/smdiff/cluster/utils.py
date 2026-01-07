@@ -75,20 +75,16 @@ def get_scratch_dir(username=None):
 
 def get_home_logs_dir():
     """
-    Get the permanent logs directory in the project.
-    
-    This is where logs are synced from scratch for permanent storage.
-    
-    Returns:
-        str: Path to logs directory in project root
+    Get the permanent run directory in the project (project_root/runs).
+    All synced checkpoints, samples, and logs live under runs/{model_id}/...
     """
     # Navigate from cluster/utils.py -> cluster -> smdiff -> src -> project_root
     module_dir = os.path.dirname(os.path.abspath(__file__))  # cluster/
     smdiff_dir = os.path.dirname(module_dir)  # smdiff/
     src_dir = os.path.dirname(smdiff_dir)  # src/
     project_root = os.path.dirname(src_dir)  # project_root/
-    
-    return os.path.join(project_root, "logs")
+
+    return os.path.join(project_root, "runs")
 
 
 def sync_to_home(scratch_path, home_base_dir=None):
@@ -104,7 +100,7 @@ def sync_to_home(scratch_path, home_base_dir=None):
     
     Example:
         scratch_path = "/work/scratch/user/log_name/checkpoints/model_500.th"
-        -> syncs to -> "project_root/logs/log_name/checkpoints/model_500.th"
+        -> syncs to -> "project_root/runs/log_name/checkpoints/model_500.th"
     """
     if home_base_dir is None:
         home_base_dir = get_home_logs_dir()

@@ -17,7 +17,7 @@
 from note_seq import DrumTrack
 from note_seq import sequences_lib
 
-import preprocessing.statistics as statistics
+from . import statistics
 
 
 def extract_drum_tracks(quantized_sequence,
