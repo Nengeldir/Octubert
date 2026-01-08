@@ -32,7 +32,7 @@ python3 src/smdiff/cli/train.py \
   --model schmu_tx_vae \
   --set tracks=melody \
   --set dataset_path=data/POP909_melody.npy \
-  --set batch_size=8 \
+  --set batch_size=4 \
   --set train_steps=400 \
   --set steps_per_log=10 \
   --set steps_per_eval=100 \
