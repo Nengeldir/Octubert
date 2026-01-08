@@ -19,8 +19,6 @@ def add_common_args(parser):
     parser.add_argument("--wandb_project", type=str, default="smdiff", help="WandB Project Name")
     parser.add_argument("--wandb_name", type=str, default=None, help="WandB Run Name")
 
-
-
 def add_sample_args(parser):
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--n_samples", type=int, default=1000)

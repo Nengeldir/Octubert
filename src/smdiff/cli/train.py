@@ -71,6 +71,17 @@ def build_underlying_argv(cfg: Dict, ns: argparse.Namespace) -> List[str]:
         args += ["--port", str(pick("port"))]
     if pick("masking_strategy"):
         args += ["--masking_strategy", pick("masking_strategy")]
+        
+    if pick("wandb", False):
+        args += ["--wandb"]
+    
+    wandb_project = pick("wandb_project")
+    if wandb_project:
+        args += ["--wandb_project", str(wandb_project)]
+        
+    wandb_name = pick("wandb_name")
+    if wandb_name:
+        args += ["--wandb_name", str(wandb_name)]
 
     return args
 
