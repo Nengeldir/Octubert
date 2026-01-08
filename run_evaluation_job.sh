@@ -3,6 +3,8 @@
 #SBATCH --output=logs/eval_%j.out
 #SBATCH --error=logs/eval_%j.err
 #SBATCH --time=04:00:00
+#SBATCH --partition=student 
+#SBATCH --account=deep_learning
 
 set -euo pipefail
 
