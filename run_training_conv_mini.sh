@@ -31,9 +31,12 @@ python -c "import torch; print('Torch:', torch.__version__, 'CUDA:', torch.cuda.
 python3 src/smdiff/cli/train.py \
   --model schmu_conv_vae \
   --set batch_size=8 \
-  --set train_steps=800 \
+  --set train_steps=400 \
   --set steps_per_log=10 \
   --set steps_per_eval=100 \
-  --set steps_per_checkpoint=200
+  --set steps_per_checkpoint=200 \
+  --wandb \
+  --wandb_project "octubert-music" \
+  --wandb_name "mini-test-schmu-conv-vae-trio" \
 
 echo "Job finished at $(date)"

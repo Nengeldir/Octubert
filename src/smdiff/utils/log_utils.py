@@ -129,7 +129,7 @@ def save_samples(np_samples, step, log_dir):
     """
     samples_dir = os.path.join(log_dir, "samples")
     os.makedirs(samples_dir, exist_ok=True)
-    save_path = os.path.join(samples_dir, f'samples_{step}.npz.npy')
+    save_path = os.path.join(samples_dir, f'samples_{step}.npy')
     np.save(save_path, np_samples, allow_pickle=True)
 
 
