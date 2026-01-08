@@ -166,7 +166,10 @@ def main(H):
                 torch.save(ema_sampler.state_dict(), ema_best_path)
             
             # 3. Save Info File (So we know WHICH step was best)
-            info_path = os.path.join(H.log_dir, "stats", "best_stats.txt")
+            stats_dir = os.path.join(H.log_dir, "stats")
+            os.makedirs(stats_dir, exist_ok=True)
+            
+            info_path = os.path.join(stats_dir, "best_stats.txt")
             with open(info_path, "w") as f:
                 f.write(f"step: {step}\nloss: {best_val_loss:.6f}\n")
         
