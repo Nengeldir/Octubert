@@ -1,6 +1,6 @@
 # Common training defaults (mirrors legacy hparams defaults)
 model: schmu_tx_vae
-tracks: trio_onehot
+tracks: trio
 bars: 64
 NOTES: 1024  # derived bars*16 in legacy; kept for clarity
 batch_size: 16

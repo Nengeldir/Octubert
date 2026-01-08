@@ -54,7 +54,7 @@ def np_to_ns(x, tokenizer_id=None):
     
     Args:
         x: NumPy array of shape (batch, seq_len, tracks)
-        tokenizer_id: Optional tokenizer ID (e.g., 'melody_onehot', 'trio_onehot')
+        tokenizer_id: Optional tokenizer ID (e.g., 'melody', 'trio')
                      If None, infers from shape
         
     Returns:
@@ -65,10 +65,10 @@ def np_to_ns(x, tokenizer_id=None):
     # Infer tokenizer from shape if not provided
     if tokenizer_id is None:
         if x.shape[-1] == 1:
-            tokenizer_id = 'melody_onehot'
+            tokenizer_id = 'melody'
             x = x.squeeze(-1)  # Remove tracks dimension for melody
         elif x.shape[-1] == 3:
-            tokenizer_id = 'trio_onehot'
+            tokenizer_id = 'trio'
         elif x.shape[-1] == 8:
             tokenizer_id = 'octuple'
         else:
@@ -79,27 +79,27 @@ def np_to_ns(x, tokenizer_id=None):
     return converter.from_tensors(x)
 
 
-def ns_to_np(ns, bars, tokenizer_id='melody_onehot'):
+def ns_to_np(ns, bars, tokenizer_id='melody'):
     """
     Convert note_seq objects to numpy arrays.
     
     Args:
         ns: list of note_seq.NoteSequence objects
         bars: Number of bars to slice
-        tokenizer_id: Tokenizer ID (e.g., 'melody_onehot', 'trio_onehot')
+        tokenizer_id: Tokenizer ID (e.g., 'melody', 'trio')
         
     Returns:
         NumPy array of tokenized sequences
     """
     from ..tokenizers.registry import TOKENIZER_REGISTRY
-    from ..preprocessing import OneHotMelodyConverter, TrioConverter
+    from ..preprocessing import OneHotMelodyConverter, POP909TrioConverter
     
     # Get converter with slice_bars parameter
     # Note: OctupleEncoding doesn't use slice_bars, only the music converters do
-    if tokenizer_id == 'melody_onehot':
+    if tokenizer_id == 'melody':
         converter = OneHotMelodyConverter(slice_bars=bars)
-    elif tokenizer_id == 'trio_onehot':
-        converter = TrioConverter(slice_bars=bars)
+    elif tokenizer_id == 'trio':
+        converter = POP909TrioConverter(slice_bars=bars)
     elif tokenizer_id == 'octuple':
         # Octuple doesn't slice by bars - it encodes full sequences
         from ..data.octuple import OctupleEncoding

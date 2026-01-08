@@ -21,7 +21,7 @@ from ..preprocessing import (
 def _make_converter(tokenizer_id: str, bars: int, max_t_per_ns: int, strict_tempo: bool = False):
 
     # Create converter with proper parameters based on tokenizer_id
-    if tokenizer_id == "melody_onehot":
+    if tokenizer_id == "melody":
         return OneHotMelodyConverter(
             slice_bars=bars,
             max_tensors_per_notesequence=max_t_per_ns,
@@ -30,7 +30,7 @@ def _make_converter(tokenizer_id: str, bars: int, max_t_per_ns: int, strict_temp
             strict_tempo=strict_tempo,
             instrument=0,  # Filter to instrument 0 (MELODY track)
         )
-    elif tokenizer_id == "trio_onehot":
+    elif tokenizer_id == "trio":
         return POP909TrioConverter(
             slice_bars=bars,
             max_tensors_per_notesequence=max_t_per_ns,
@@ -85,7 +85,7 @@ def process_midi_file(args):
 
 
 def load_dataset(root_dir: str,
-                 tokenizer_id: str = "melody_onehot",
+                 tokenizer_id: str = "melody",
                  bars: int = 64,
                  max_tensors_per_ns: int = 5,
                  cache_path: str | None = None,
@@ -97,7 +97,7 @@ def load_dataset(root_dir: str,
 
     Args:
         root_dir: Directory containing MIDI files (searched recursively).
-        tokenizer_id: 'melody_onehot' or 'trio_onehot'.
+        tokenizer_id: 'melody' or 'trio'.
         bars: Number of bars per slice.
         max_tensors_per_ns: Max segments extracted per MIDI file.
         cache_path: Optional .npy cache path for saving/loading.
@@ -142,10 +142,10 @@ def load_dataset(root_dir: str,
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Prepare POP909 datasets (OneHot and Octuple formats)")
+    parser = argparse.ArgumentParser(description="Prepare POP909 datasets (Standard and Octuple formats)")
     parser.add_argument("--root_dir", type=str, default="data/POP909", help="Root directory of the dataset")
-    parser.add_argument("--tokenizer_id", type=str, default="melody_onehot",
-                        choices=["melody_onehot", "trio_onehot", "melody_octuple", "trio_octuple"],
+    parser.add_argument("--tokenizer_id", type=str, default="melody",
+                        choices=["melody", "trio", "melody_octuple", "trio_octuple"],
                         help="Tokenizer to use: OneHot (melody/trio) or Octuple (melody/trio)")
     parser.add_argument("--target", type=str, default=None, help="Output .npy file (defaults per tokenizer)")
     parser.add_argument("--limit", type=int, default=0, help="Limit number of files to process")
@@ -158,13 +158,13 @@ def main():
 
     # Sensible defaults for targets
     if args.target is None:
-        if args.tokenizer_id == "trio_onehot":
+        if args.tokenizer_id == "trio":
             args.target = "data/POP909_trio.npy"
         elif args.tokenizer_id == "trio_octuple":
             args.target = "data/POP909_trio_octuple.npy"
         elif args.tokenizer_id == "melody_octuple":
             args.target = "data/POP909_melody_octuple.npy"
-        else:  # melody_onehot
+        else:  # melody
             args.target = "data/POP909_melody.npy"
 
     load_dataset(

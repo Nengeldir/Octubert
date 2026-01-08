@@ -19,23 +19,23 @@ DATASET_REGISTRY: Dict[str, DatasetSpec] = {
     # OneHot encoded datasets
     "pop909_melody": DatasetSpec(
         id="pop909_melody",
-        description="POP909 melody combined .npy (OneHot encoding)",
+        description="POP909 melody combined .npy",
         dataset_path="data/POP909_melody.npy",
         tracks="melody",
         bars=64,
         notes=1024,
-        tokenizer_id="melody_onehot",
+        tokenizer_id="melody",
     ),
     "pop909_trio": DatasetSpec(
         id="pop909_trio",
-        description="POP909 trio combined .npy (OneHot encoding)",
+        description="POP909 trio combined .npy",
         dataset_path="data/POP909_trio.npy",
         tracks="trio",
         bars=64,
         notes=1024,
-        tokenizer_id="trio_onehot",
+        tokenizer_id="trio",
         available=True,
-        notes_txt="Generate via: python -m smdiff.cli.prepare_data --tokenizer_id trio_onehot",
+        notes_txt="Generate via: python -m smdiff.cli.prepare_data --tokenizer_id trio",
     ),
     
     # Octuple encoded datasets

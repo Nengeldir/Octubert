@@ -24,6 +24,7 @@ from smdiff.configs.loader import load_config
 from smdiff.data import apply_dataset_to_config
 from smdiff.masking import resolve_masking_id
 from smdiff.tokenizers import resolve_tokenizer_id
+from smdiff.cluster import get_current_username, is_cluster, get_scratch_dir
 
 
 def build_underlying_argv(cfg: Dict, ns: argparse.Namespace) -> List[str]:
@@ -126,7 +127,7 @@ def main():
             f"Dataset not found at '{dataset_path}'. Set --dataset_id or --dataset_path to an existing location."
         )
 
-    tokenizer_id = cfg.get("tokenizer_id") or cfg.get("tracks", "melody_onehot")
+    tokenizer_id = cfg.get("tokenizer_id") or cfg.get("tracks", "melody")
     resolve_tokenizer_id(tokenizer_id)
 
     masking_strategy = cfg.get("masking_strategy") or ns.strategy
@@ -143,16 +144,30 @@ def main():
         H = get_sampler_hparams('train')
     finally:
         sys.argv = prev_argv
+        
+    run_id = f"{ns.model}_{tokenizer_id}"
+        
+    project_run_dir = os.path.join("runs", run_id)
+    H.project_log_dir = os.path.abspath(project_run_dir)
+    
+    # 2. Define the Active Log Path (Scratch vs Home)
+    if is_cluster():
+        username = get_current_username()
+        scratch_root = get_scratch_dir(username)
+        # /work/scratch/user/runs/model_id
+        H.log_dir = os.path.join(scratch_root, "runs", run_id)
+        print(f"Cluster detected: Logging to Scratch ({H.log_dir})")
+    else:
+        H.log_dir = H.project_log_dir
+        print(f"Local run: Logging to Project Dir ({H.log_dir})")
 
     # Enrich hparams for logging/visibility
     H.tokenizer_id = tokenizer_id
     H.dataset_id = ns.dataset_id
     H.model_id = ns.model  # Store canonical model_id for registry lookup
 
-    # Standardize run directory to runs/{model_id}
-    H.log_dir = os.path.join("runs", ns.model)
     if not H.load_dir:
-        H.load_dir = H.log_dir
+        H.load_dir = H.project_log_dir
 
     # Proceed with training
     config_log(H.log_dir)

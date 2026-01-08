@@ -61,7 +61,7 @@ class HparamsAbsorbing(HparamsBase):
         if not self.load_dir:
             self.load_dir = self.log_dir
         print("DEEBUG: Tracks: ", self.tracks)
-        self.codebook_size = (128, ) if self.tracks == 'melody_onehot' else (128, 128, 128)
+        self.codebook_size = (128, ) if self.tracks == 'melody' else (128, 128, 128)
         self.latent_shape = (self.NOTES, len(self.codebook_size))
         self.load_optim = self.load_step != 0
 

@@ -10,11 +10,11 @@ class TokenizerSpec:
     notes: Optional[str] = None
 
 
-def _create_melody_onehot():
+def _create_melody():
     from ..preprocessing.data import OneHotMelodyConverter
     return OneHotMelodyConverter()
 
-def _create_trio_onehot():
+def _create_trio():
     from ..preprocessing.data import POP909TrioConverter
     return POP909TrioConverter()
 
@@ -28,15 +28,15 @@ def _create_trio_octuple():
 
 
 TOKENIZER_REGISTRY: Dict[str, TokenizerSpec] = {
-    "melody_onehot": TokenizerSpec(
-        id="melody_onehot",
-        description="One-hot melody converter (1 track)",
-        factory=_create_melody_onehot
+    "melody": TokenizerSpec(
+        id="melody",
+        description="melody converter (1 track)",
+        factory=_create_melody
     ),
-    "trio_onehot": TokenizerSpec(
-        id="trio_onehot",
-        description="One-hot trio converter (3 tracks)",
-        factory=_create_trio_onehot
+    "trio": TokenizerSpec(
+        id="trio",
+        description="trio converter (3 tracks)",
+        factory=_create_trio
     ),
     "melody_octuple": TokenizerSpec(
         id="melody_octuple",

@@ -3,7 +3,6 @@ import torch
 import numpy as np
 import logging
 from ..preprocessing.data import POP909TrioConverter, OneHotMelodyConverter
-from ..cluster import sync_to_home
 from note_seq import note_sequence_to_midi_file
 
 
@@ -68,12 +67,9 @@ def save_model(model, model_save_name, step, log_dir):
     print(f"Saving {model_save_name} as {model_name}")
     save_path = os.path.join(ckpt_dir, model_name)
     torch.save(model.state_dict(), save_path)
-    
-    # Sync to permanent storage if on cluster
-    sync_to_home(save_path)
 
 
-def load_model(model, model_load_name, step, log_dir, strict=True):
+def load_model(model, model_load_name, step, log_dir, fallback_dirs=None, strict=True):
     """
     Load model checkpoint from log_dir/checkpoints/.
     
@@ -93,9 +89,13 @@ def load_model(model, model_load_name, step, log_dir, strict=True):
     candidates = [f"{friendly_name}_{step}.th"]
     if friendly_name != model_load_name:
         candidates.append(f"{model_load_name}_{step}.th")
-
+        
     last_error = None
     search_dirs = [ckpt_dir]
+    if fallback_dirs is not None:
+        search_dirs_fallback = [os.path.join(base_dir, "checkpoints") for base_dir in fallback_dirs]
+        search_dirs.extend(search_dirs_fallback)
+        
     for base in search_dirs:
         for fname in candidates:
             path = os.path.join(base, fname)
@@ -131,9 +131,6 @@ def save_samples(np_samples, step, log_dir):
     os.makedirs(samples_dir, exist_ok=True)
     save_path = os.path.join(samples_dir, f'samples_{step}.npz.npy')
     np.save(save_path, np_samples, allow_pickle=True)
-    
-    # Sync to permanent storage if on cluster
-    sync_to_home(save_path)
 
 
 def save_stats(H, stats, step):
@@ -151,9 +148,6 @@ def save_stats(H, stats, step):
     save_path = os.path.join(stats_dir, f"stats_{step}.pt")
     log(f"Saving stats to {save_path}")
     torch.save(stats, save_path)
-    
-    # Sync to permanent storage if on cluster
-    sync_to_home(save_path)
 
 
 def load_stats(H, step):
@@ -167,15 +161,15 @@ def load_stats(H, step):
     Returns:
         dict: Dictionary of training statistics
     """
-    base_dir = H.log_dir if os.path.isabs(H.log_dir) else H.log_dir
-    stats_dir = os.path.join(base_dir, "stats")
-    load_path = os.path.join(stats_dir, f"stats_{step}.pt")
+
+    stats_dir = [os.path.join(base_dir, "stats", f"stats_{step}.pt") for base_dir in [H.load_dir, H.log_dir]]
     
-    if not os.path.exists(load_path):
-        raise FileNotFoundError(f"Stats file not found: {load_path}")
+    for candidate_dir in stats_dir:
+        if not os.path.exists(candidate_dir):
+            raise FileNotFoundError(f"Stats file not found: {candidate_dir}")
     
-    log(f"Loading stats from {load_path}")
-    return torch.load(load_path)
+        log(f"Loading stats from {candidate_dir}")
+        return torch.load(candidate_dir)
 
 
 def log_stats(step, stats):
@@ -211,13 +205,15 @@ def samples_2_noteseq(np_samples, tokenizer_id=None):
         if spec and spec.factory:
             converter = spec.factory()
                     
-            # 1. Handle OneHot shape quirk (Melody OneHot expects 2D, Octuple expects 2D/3D)
-            # If it's legacy OneHot and has an extra dim, squeeze it.
-            if 'melody' in tokenizer_id and 'onehot' in tokenizer_id:
-                 if np_samples.ndim == 3 and np_samples.shape[2] == 1:
-                    np_samples = np_samples[:, :, 0]
-
-            # 2. Call the unified method
+            is_octuple = 'octuple' in tokenizer_id
+            
+            if tokenizer_id == 'melody' and not is_octuple:
+                # Melody OneHot expects (Time, 1) but model output might be (Time,)
+                if np_samples.ndim == 2:
+                    np_samples = np_samples[:, :, None] # (B, T) -> (B, T, 1)
+            
+            # Trio OneHot usually handles (B, T, 3) fine, so no squeeze needed usually.
+            
             return converter.from_tensors(np_samples)
             
     return []

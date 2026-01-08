@@ -14,6 +14,10 @@ def add_common_args(parser):
     parser.add_argument("--log_base_dir", type=str, default=None)
     parser.add_argument("--port", type=int, default=8097)
     parser.add_argument("--masking_strategy", type=str, default=None)
+    
+    parser.add_argument("--wandb", const=True, action="store_const", default=False, help="Enable WandB logging")
+    parser.add_argument("--wandb_project", type=str, default="smdiff", help="WandB Project Name")
+    parser.add_argument("--wandb_name", type=str, default=None, help="WandB Run Name")
 
 
 

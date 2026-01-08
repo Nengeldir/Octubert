@@ -6,6 +6,7 @@ compatibility with legacy hparams infrastructure.
 import copy
 import time
 import os
+import wandb
 import numpy as np
 import torch
 from tqdm import tqdm
@@ -18,6 +19,7 @@ from .utils.log_utils import (
 from .utils.sampler_utils import get_sampler, get_samples
 from .utils.train_utils import EMA, optim_warmup, augment_note_tensor
 from .data.base import cycle
+from .cluster import copy_final_model_to_home
 
 
 def main(H):
@@ -30,7 +32,16 @@ def main(H):
 
     data_np = np.load(H.dataset_path, allow_pickle=True)
     midi_data = SimpleNpyDataset(data_np, H.NOTES, tokenizer_id=getattr(H, 'tokenizer_id', None))
-
+    
+    if getattr(H, 'wandb', False):
+        run_name = H.wandb_name if H.wandb_name else f"{H.model_id}_{H.tracks}"
+        wandb.init(
+            project=H.wandb_project, 
+            name=run_name, 
+            config=dict(H),
+            dir=H.log_dir # Store wandb local files in the run dir
+        )
+    
     # Split train/val
     val_idx = int(len(midi_data) * H.validation_set_size)
     train_loader = torch.utils.data.DataLoader(
@@ -72,20 +83,20 @@ def main(H):
     if H.load_step > 0:
         start_step = H.load_step + 1
 
-        sampler = load_model(sampler, H.sampler, H.load_step, H.load_dir).cuda()
+        sampler = load_model(sampler, H.sampler, H.load_step, H.load_dir, [H.log_dir]).cuda()
         log("Loaded model checkpoint")
         
         if H.ema:
             try:
                 ema_sampler = load_model(
-                    ema_sampler, f'{H.sampler}_ema', H.load_step, H.load_dir
+                    ema_sampler, f'{H.sampler}_ema', H.load_step, H.load_dir, [H.log_dir]
                 )
             except Exception:
                 ema_sampler = copy.deepcopy(sampler)
                 
         if H.load_optim:
             optim = load_model(
-                optim, f'{H.sampler}_optim', H.load_step, H.load_dir
+                optim, f'{H.sampler}_optim', H.load_step, H.load_dir, [H.log_dir]
             )
             for param_group in optim.param_groups:
                 param_group['lr'] = H.lr
@@ -109,7 +120,7 @@ def main(H):
 
     sampler = sampler.cuda()
 
-    scaler = torch.cuda.amp.GradScaler()
+    scaler = torch.amp.GradScaler("cuda")
     train_iterator = cycle(train_loader)
 
     log(f"Sampler params total: {sum(p.numel() for p in sampler.parameters())}")
@@ -137,7 +148,7 @@ def main(H):
 
         if H.amp:
             optim.zero_grad()
-            with torch.cuda.amp.autocast():
+            with torch.amp.autocast("cuda"):
                 stats = sampler.train_iter(x)
 
             scaler.scale(stats['loss']).backward()
@@ -169,6 +180,18 @@ def main(H):
             losses = np.array([])
 
             log_stats(step, stats)
+            
+            if getattr(H, 'wandb', False):
+                wandb_metrics = {
+                    "train/loss": mean_loss,
+                    "train/step_time": step_time_taken,
+                    "train/lr": optim.param_groups[0]['lr'],
+                    "train/step": step
+                }
+                if H.sampler == 'absorbing':
+                    wandb_metrics["train/vb_loss"] = stats.get('vb_loss', 0)
+                
+                wandb.log(wandb_metrics, step=step)
 
             if H.sampler == 'absorbing':
                 elbo = np.append(elbo, stats['vb_loss'].item())
@@ -208,6 +231,16 @@ def main(H):
             val_elbos = np.append(val_elbos, valid_elbo)
             log(f"Validation at step {step}: loss={valid_loss:.6f}" + 
                 (f", elbo={valid_elbo:.6f}" if H.sampler == 'absorbing' else ""))
+            
+            if getattr(H, 'wandb', False):
+                val_metrics = {
+                    "val/loss": valid_loss,
+                    "val/step": step
+                }
+                if H.sampler == 'absorbing':
+                    val_metrics["val/elbo"] = valid_elbo
+                
+                wandb.log(val_metrics, step=step)
 
         # Checkpointing
         if step % H.steps_per_checkpoint == 0 and step > H.load_step:
@@ -228,3 +261,16 @@ def main(H):
                 'steps_per_eval': H.steps_per_eval,
             }
             save_stats(H, train_stats, step)
+            
+    print(f"Training complete. Saving final model at step {H.train_steps}...")
+    save_model(sampler, H.sampler, H.train_steps, H.log_dir)
+    save_model(optim, f'{H.sampler}_optim', H.train_steps, H.log_dir)
+    if H.ema:
+        save_model(ema_sampler, f'{H.sampler}_ema', H.train_steps, H.log_dir)
+        
+    if getattr(H, 'wandb', False):
+        wandb.finish()
+        
+    # Auto-Sync to Project Dir
+    if hasattr(H, 'project_log_dir') and H.log_dir != H.project_log_dir:
+        copy_final_model_to_home(H.log_dir, H.project_log_dir)
