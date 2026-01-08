@@ -34,16 +34,29 @@ def pitch_class_histogram(tokens, pitch_idx=2):
     Compute pitch class histogram (C, C#, D, ..., B).
     
     Args:
-        tokens: (N, T, C) array where pitch is at index pitch_idx
+        tokens: List of (T, C) arrays OR single (T, C) array OR (N, T, C) array
         pitch_idx: Index of pitch in the token tuple
         
     Returns:
         12-element array with pitch class counts
     """
-    if tokens.ndim == 2:
-        tokens = tokens[np.newaxis, :]
+    # Handle list of variable-length arrays
+    if isinstance(tokens, list):
+        pitches = []
+        for sample in tokens:
+            sample = np.asarray(sample)
+            if sample.ndim == 2:
+                pitches.extend(sample[:, pitch_idx])
+            else:
+                pitches.extend(sample.flatten())
+        pitches = np.array(pitches)
+    else:
+        tokens = np.asarray(tokens)
+        if tokens.ndim == 2:
+            pitches = tokens[:, pitch_idx]
+        else:  # (N, T, C)
+            pitches = tokens[:, :, pitch_idx].flatten()
     
-    pitches = tokens[:, :, pitch_idx].flatten()
     # Remove invalid pitches (e.g., > 127 or special tokens)
     pitches = pitches[(pitches >= 0) & (pitches < 128)]
     
@@ -60,17 +73,30 @@ def duration_histogram(tokens, duration_idx=3, max_bins=32):
     Compute duration histogram.
     
     Args:
-        tokens: (N, T, C) array where duration is at index duration_idx
+        tokens: List of (T, C) arrays OR single (T, C) array OR (N, T, C) array
         duration_idx: Index of duration in the token tuple
         max_bins: Maximum duration bins to consider
         
     Returns:
         Histogram of duration values
     """
-    if tokens.ndim == 2:
-        tokens = tokens[np.newaxis, :]
+    # Handle list of variable-length arrays
+    if isinstance(tokens, list):
+        durations = []
+        for sample in tokens:
+            sample = np.asarray(sample)
+            if sample.ndim == 2:
+                durations.extend(sample[:, duration_idx])
+            else:
+                durations.extend(sample.flatten())
+        durations = np.array(durations)
+    else:
+        tokens = np.asarray(tokens)
+        if tokens.ndim == 2:
+            durations = tokens[:, duration_idx]
+        else:  # (N, T, C)
+            durations = tokens[:, :, duration_idx].flatten()
     
-    durations = tokens[:, :, duration_idx].flatten()
     # Filter valid durations
     durations = durations[(durations >= 0) & (durations < max_bins)]
     
@@ -83,17 +109,30 @@ def velocity_histogram(tokens, velocity_idx=4, max_bins=128):
     Compute velocity histogram.
     
     Args:
-        tokens: (N, T, C) array where velocity is at index velocity_idx
+        tokens: List of (T, C) arrays OR single (T, C) array OR (N, T, C) array
         velocity_idx: Index of velocity in the token tuple
         max_bins: Maximum velocity bins (typically 128)
         
     Returns:
         Histogram of velocity values
     """
-    if tokens.ndim == 2:
-        tokens = tokens[np.newaxis, :]
+    # Handle list of variable-length arrays
+    if isinstance(tokens, list):
+        velocities = []
+        for sample in tokens:
+            sample = np.asarray(sample)
+            if sample.ndim == 2:
+                velocities.extend(sample[:, velocity_idx])
+            else:
+                velocities.extend(sample.flatten())
+        velocities = np.array(velocities)
+    else:
+        tokens = np.asarray(tokens)
+        if tokens.ndim == 2:
+            velocities = tokens[:, velocity_idx]
+        else:  # (N, T, C)
+            velocities = tokens[:, :, velocity_idx].flatten()
     
-    velocities = tokens[:, :, velocity_idx].flatten()
     # Filter valid velocities
     velocities = velocities[(velocities >= 0) & (velocities < max_bins)]
     
@@ -106,18 +145,27 @@ def note_density_per_bar(tokens, bar_idx=0, steps_per_bar=16):
     Compute notes per bar distribution.
     
     Args:
-        tokens: (N, T, C) array where bar number is at index bar_idx
+        tokens: List of (T, C) arrays OR (N, T, C) array
         bar_idx: Index of bar number in the token tuple
         steps_per_bar: Steps per bar (typically 16 for 16th notes)
         
     Returns:
         Array of notes per bar for each sample
     """
-    if tokens.ndim == 2:
-        tokens = tokens[np.newaxis, :]
-    
     densities = []
-    for sample in tokens:
+    
+    # Handle list of variable-length arrays
+    if isinstance(tokens, list):
+        samples = tokens
+    else:
+        tokens = np.asarray(tokens)
+        if tokens.ndim == 2:
+            samples = [tokens]
+        else:  # (N, T, C)
+            samples = [tokens[i] for i in range(tokens.shape[0])]
+    
+    for sample in samples:
+        sample = np.asarray(sample)
         bars = sample[:, bar_idx]
         unique_bars = np.unique(bars[bars >= 0])
         
@@ -199,7 +247,7 @@ def compute_sample_diversity(tokens_list, pitch_idx=2, duration_idx=3):
     Compute average pairwise distance between samples.
     
     Args:
-        tokens_list: List of (T, C) arrays
+        tokens_list: List of (T, C) arrays (variable length)
         pitch_idx: Index of pitch
         duration_idx: Index of duration
         
@@ -211,9 +259,16 @@ def compute_sample_diversity(tokens_list, pitch_idx=2, duration_idx=3):
     
     features = []
     for tokens in tokens_list:
+        tokens = np.asarray(tokens)
         # Create feature vector
-        pch = pitch_class_histogram(tokens, pitch_idx)
-        dur = duration_histogram(tokens, duration_idx, max_bins=32)
+        pitches = tokens[:, pitch_idx]
+        valid_pitches = pitches[(pitches >= 0) & (pitches < 128)]
+        pch = np.bincount(valid_pitches % 12, minlength=12)
+        
+        durations = tokens[:, duration_idx]
+        valid_durations = durations[(durations >= 0) & (durations < 32)]
+        dur = np.bincount(valid_durations.astype(int), minlength=32)
+        
         feat = np.concatenate([pch, dur])
         features.append(feat)
     

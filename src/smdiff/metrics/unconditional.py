@@ -18,33 +18,29 @@ def evaluate_unconditional(generated_samples, train_samples):
     Evaluate unconditional generation against training data.
     
     Args:
-        generated_samples: List of (T, C) generated token arrays
-        train_samples: List of (T, C) training token arrays
+        generated_samples: List of (T, C) generated token arrays (variable length)
+        train_samples: List of (T, C) training token arrays (variable length)
         
     Returns:
         Dictionary of metrics
     """
     metrics = {}
     
-    # Convert to numpy arrays
-    gen_array = np.array([s for s in generated_samples])
-    train_array = np.array([s for s in train_samples])
-    
-    # Distribution similarity metrics
-    gen_pch = pitch_class_histogram(gen_array)
-    train_pch = pitch_class_histogram(train_array)
+    # Compute distributions on lists (functions handle variable-length sequences)
+    gen_pch = pitch_class_histogram(generated_samples)
+    train_pch = pitch_class_histogram(train_samples)
     metrics['pch_kl'] = kl_divergence(train_pch, gen_pch)
     
-    gen_dur = duration_histogram(gen_array)
-    train_dur = duration_histogram(train_array)
+    gen_dur = duration_histogram(generated_samples)
+    train_dur = duration_histogram(train_samples)
     metrics['duration_kl'] = kl_divergence(train_dur, gen_dur)
     
-    gen_vel = velocity_histogram(gen_array)
-    train_vel = velocity_histogram(train_array)
+    gen_vel = velocity_histogram(generated_samples)
+    train_vel = velocity_histogram(train_samples)
     metrics['velocity_kl'] = kl_divergence(train_vel, gen_vel)
     
-    gen_density = note_density_per_bar(gen_array)
-    train_density = note_density_per_bar(train_array)
+    gen_density = note_density_per_bar(generated_samples)
+    train_density = note_density_per_bar(train_samples)
     
     # Create histograms for note density
     max_density = max(gen_density.max(), train_density.max()) + 1
