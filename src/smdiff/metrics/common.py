@@ -1,0 +1,259 @@
+"""Common utilities for metrics computation."""
+import numpy as np
+from scipy.stats import entropy
+
+
+def kl_divergence(p, q, epsilon=1e-10):
+    """
+    Compute KL divergence between two distributions.
+    
+    Args:
+        p: True distribution (numpy array)
+        q: Predicted distribution (numpy array)
+        epsilon: Small value to avoid log(0)
+        
+    Returns:
+        KL divergence value
+    """
+    p = np.asarray(p, dtype=np.float64)
+    q = np.asarray(q, dtype=np.float64)
+    
+    # Normalize to sum to 1
+    p = p / (p.sum() + epsilon)
+    q = q / (q.sum() + epsilon)
+    
+    # Add epsilon to avoid log(0)
+    p = p + epsilon
+    q = q + epsilon
+    
+    return entropy(p, q)
+
+
+def pitch_class_histogram(tokens, pitch_idx=2):
+    """
+    Compute pitch class histogram (C, C#, D, ..., B).
+    
+    Args:
+        tokens: (N, T, C) array where pitch is at index pitch_idx
+        pitch_idx: Index of pitch in the token tuple
+        
+    Returns:
+        12-element array with pitch class counts
+    """
+    if tokens.ndim == 2:
+        tokens = tokens[np.newaxis, :]
+    
+    pitches = tokens[:, :, pitch_idx].flatten()
+    # Remove invalid pitches (e.g., > 127 or special tokens)
+    pitches = pitches[(pitches >= 0) & (pitches < 128)]
+    
+    # Map to pitch classes (0-11)
+    pitch_classes = pitches % 12
+    
+    # Count occurrences
+    hist = np.bincount(pitch_classes.astype(int), minlength=12)
+    return hist
+
+
+def duration_histogram(tokens, duration_idx=3, max_bins=32):
+    """
+    Compute duration histogram.
+    
+    Args:
+        tokens: (N, T, C) array where duration is at index duration_idx
+        duration_idx: Index of duration in the token tuple
+        max_bins: Maximum duration bins to consider
+        
+    Returns:
+        Histogram of duration values
+    """
+    if tokens.ndim == 2:
+        tokens = tokens[np.newaxis, :]
+    
+    durations = tokens[:, :, duration_idx].flatten()
+    # Filter valid durations
+    durations = durations[(durations >= 0) & (durations < max_bins)]
+    
+    hist = np.bincount(durations.astype(int), minlength=max_bins)
+    return hist
+
+
+def velocity_histogram(tokens, velocity_idx=4, max_bins=128):
+    """
+    Compute velocity histogram.
+    
+    Args:
+        tokens: (N, T, C) array where velocity is at index velocity_idx
+        velocity_idx: Index of velocity in the token tuple
+        max_bins: Maximum velocity bins (typically 128)
+        
+    Returns:
+        Histogram of velocity values
+    """
+    if tokens.ndim == 2:
+        tokens = tokens[np.newaxis, :]
+    
+    velocities = tokens[:, :, velocity_idx].flatten()
+    # Filter valid velocities
+    velocities = velocities[(velocities >= 0) & (velocities < max_bins)]
+    
+    hist = np.bincount(velocities.astype(int), minlength=max_bins)
+    return hist
+
+
+def note_density_per_bar(tokens, bar_idx=0, steps_per_bar=16):
+    """
+    Compute notes per bar distribution.
+    
+    Args:
+        tokens: (N, T, C) array where bar number is at index bar_idx
+        bar_idx: Index of bar number in the token tuple
+        steps_per_bar: Steps per bar (typically 16 for 16th notes)
+        
+    Returns:
+        Array of notes per bar for each sample
+    """
+    if tokens.ndim == 2:
+        tokens = tokens[np.newaxis, :]
+    
+    densities = []
+    for sample in tokens:
+        bars = sample[:, bar_idx]
+        unique_bars = np.unique(bars[bars >= 0])
+        
+        notes_per_bar = []
+        for bar in unique_bars:
+            mask = bars == bar
+            notes_per_bar.append(mask.sum())
+        
+        densities.extend(notes_per_bar)
+    
+    return np.array(densities)
+
+
+def compute_self_similarity(tokens, pitch_idx=2, duration_idx=3, window_bars=4, steps_per_bar=16):
+    """
+    Compute self-similarity by comparing consecutive windows.
+    
+    Args:
+        tokens: (T, C) single sample
+        pitch_idx: Index of pitch
+        duration_idx: Index of duration
+        window_bars: Window size in bars
+        steps_per_bar: Steps per bar
+        
+    Returns:
+        Average cosine similarity between consecutive windows
+    """
+    window_size = window_bars * steps_per_bar
+    num_windows = len(tokens) // window_size
+    
+    if num_windows < 2:
+        return 0.0
+    
+    similarities = []
+    for i in range(num_windows - 1):
+        start1 = i * window_size
+        end1 = start1 + window_size
+        start2 = (i + 1) * window_size
+        end2 = start2 + window_size
+        
+        window1 = tokens[start1:end1]
+        window2 = tokens[start2:end2]
+        
+        # Create feature vector (pitch + duration)
+        feat1 = np.concatenate([window1[:, pitch_idx], window1[:, duration_idx]])
+        feat2 = np.concatenate([window2[:, pitch_idx], window2[:, duration_idx]])
+        
+        # Cosine similarity
+        norm1 = np.linalg.norm(feat1) + 1e-10
+        norm2 = np.linalg.norm(feat2) + 1e-10
+        sim = np.dot(feat1, feat2) / (norm1 * norm2)
+        similarities.append(sim)
+    
+    return np.mean(similarities) if similarities else 0.0
+
+
+def compute_pitch_range(tokens, pitch_idx=2):
+    """
+    Compute pitch range (span between min and max pitch).
+    
+    Args:
+        tokens: (T, C) single sample
+        pitch_idx: Index of pitch
+        
+    Returns:
+        Pitch range in semitones
+    """
+    pitches = tokens[:, pitch_idx]
+    valid_pitches = pitches[(pitches >= 0) & (pitches < 128)]
+    
+    if len(valid_pitches) == 0:
+        return 0
+    
+    return valid_pitches.max() - valid_pitches.min()
+
+
+def compute_sample_diversity(tokens_list, pitch_idx=2, duration_idx=3):
+    """
+    Compute average pairwise distance between samples.
+    
+    Args:
+        tokens_list: List of (T, C) arrays
+        pitch_idx: Index of pitch
+        duration_idx: Index of duration
+        
+    Returns:
+        Average pairwise L2 distance
+    """
+    if len(tokens_list) < 2:
+        return 0.0
+    
+    features = []
+    for tokens in tokens_list:
+        # Create feature vector
+        pch = pitch_class_histogram(tokens, pitch_idx)
+        dur = duration_histogram(tokens, duration_idx, max_bins=32)
+        feat = np.concatenate([pch, dur])
+        features.append(feat)
+    
+    features = np.array(features)
+    
+    # Compute pairwise distances
+    distances = []
+    n = len(features)
+    for i in range(n):
+        for j in range(i + 1, n):
+            dist = np.linalg.norm(features[i] - features[j])
+            distances.append(dist)
+    
+    return np.mean(distances) if distances else 0.0
+
+
+def is_valid_sample(tokens, max_pitch=127, max_duration=255):
+    """
+    Check if a sample is valid (decodable to MIDI).
+    
+    Args:
+        tokens: (T, C) array
+        max_pitch: Maximum valid pitch
+        max_duration: Maximum valid duration
+        
+    Returns:
+        Boolean indicating validity
+    """
+    # Check if pitches are in valid range
+    pitches = tokens[:, 2]
+    if np.any(pitches > max_pitch) or np.any(pitches < 0):
+        return False
+    
+    # Check if durations are reasonable
+    durations = tokens[:, 3]
+    if np.any(durations > max_duration) or np.any(durations < 0):
+        return False
+    
+    # Check if there's at least one note
+    if len(pitches) == 0:
+        return False
+    
+    return True
