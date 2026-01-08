@@ -268,6 +268,13 @@ def main(H):
     if H.ema:
         save_model(ema_sampler, f'{H.sampler}_ema', H.train_steps, H.log_dir)
         
+    samples = get_samples(
+            ema_sampler if H.ema else sampler,
+            H.sample_steps,
+            b=H.show_samples
+        )
+    save_samples(samples, H.train_steps, H.log_dir)
+        
     if getattr(H, 'wandb', False):
         wandb.finish()
         

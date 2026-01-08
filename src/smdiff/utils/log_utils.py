@@ -197,6 +197,7 @@ def save_noteseqs(ns, prefix='pre_adv'):
 def samples_2_noteseq(np_samples, tokenizer_id=None):
     """
     Convert numpy samples to note_seq objects using tokenizer registry.
+    Handles fixing out-of-range tokens from early training.
     """
     if tokenizer_id:
         from ..tokenizers.registry import TOKENIZER_REGISTRY
@@ -207,12 +208,33 @@ def samples_2_noteseq(np_samples, tokenizer_id=None):
                     
             is_octuple = 'octuple' in tokenizer_id
             
+            # --- SAFETY CLAMP: Fix for "Event out of range" ---
+            max_val = None
+            
+            # 1. Explicitly defined sizes for known converters
+            if tokenizer_id in ['melody', 'trio']:
+                max_val = 108 # HIGHEST MIDI TON IN MAGENTA PIPELINES FOR PIANO
+            
+            # 2. Dynamic check for other converters (like octuple)
+            elif hasattr(converter, 'input_depth'): 
+                max_val = converter.input_depth - 1
+            elif hasattr(converter, '_vocab_size'):
+                max_val = converter._vocab_size - 1
+            
+            # 3. Apply Clamp
+            if max_val is not None:
+                # Identify out-of-bounds indices
+                mask = np_samples > max_val
+                if np.any(mask):
+                    # Clamp to max_val (usually 'Silence'/'No Event')
+                    np_samples[mask] = 0
+            # --------------------------------------------------
+
             if tokenizer_id == 'melody' and not is_octuple:
                 # Melody OneHot expects (Time, 1) but model output might be (Time,)
                 if np_samples.ndim == 2:
-                    np_samples = np_samples[:, :, None] # (B, T) -> (B, T, 1)
-            
-            # Trio OneHot usually handles (B, T, 3) fine, so no squeeze needed usually.
+                    # (Batch, Time) -> (Batch, Time, 1) for converter
+                    np_samples = np_samples[:, :, np.newaxis]
             
             return converter.from_tensors(np_samples)
             
