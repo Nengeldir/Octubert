@@ -23,7 +23,7 @@ octuple_ddpm:
   NOTES: 1024
   codebook_size: [2048, 128, 129, 256, 128, 32, 256, 49]
   latent_shape: [1024, 8]
-  augment: false
+  augment: true
   dataset_path: "data/POP909_trio_octuple.npy"
 
 octuple_mask_ddpm:

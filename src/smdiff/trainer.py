@@ -156,9 +156,19 @@ def main(H):
             log_msg += " (NEW BEST!)"
             best_val_loss = valid_loss
             # Save "best" version specifically
-            save_model(sampler, f"{H.sampler}_best", step, H.log_dir)
+            # 1. Save Main Model (Overwrite)
+            best_path = os.path.join(H.log_dir, "checkpoints", f"best.pt")
+            torch.save(sampler.state_dict(), best_path)
+            
+            # 2. Save EMA Model (Overwrite)
             if H.ema:
-                save_model(ema_sampler, f"{H.sampler}_ema_best", step, H.log_dir)
+                ema_best_path = os.path.join(H.log_dir, "checkpoints", f"ema_best.pt")
+                torch.save(ema_sampler.state_dict(), ema_best_path)
+            
+            # 3. Save Info File (So we know WHICH step was best)
+            info_path = os.path.join(H.log_dir, "stats", "best_stats.txt")
+            with open(info_path, "w") as f:
+                f.write(f"step: {step}\nloss: {best_val_loss:.6f}\n")
         
         log(log_msg)
         

@@ -114,28 +114,3 @@
 │  │          └─ sync_to_home() → copy to home                              │
 │  └─ END FOR EACH STEP                                                      │
 └────────────────────────────────────────────────────────────────────────────┘
-
-Call Order Summary During Training
-Phase	Function	File	Purpose
-Init	load_config()	loader.py	Merge base → model → user → --set
-Init	apply_dataset_to_config()	registry.py	Update config with dataset info
-Init	get_sampler_hparams()	hparams (legacy)	Create hyperparameters object
-Init	get_sampler(H)	sampler_utils.py	Initialize model from registry
-Per step	augment_note_tensor()	train_utils.py	Optional data augmentation
-Per step	sampler.train_iter()	models/	Forward + loss computation
-Per step	ema.update_model_average()	train_utils.py	Update EMA shadow model
-Per log step	log_stats()	log_utils.py	Log to console/file
-Per sample step	get_samples()	sampler_utils.py	Generate samples via diffusion
-Per sample step	save_samples()	log_utils.py	Save .npz to runs/{model}/samples/
-Per sample step	samples_2_noteseq()	log_utils.py	Convert to MIDI (optional)
-Per eval step	(validation loop)	trainer.py	Evaluate on validation set
-Per checkpoint step	save_model()	log_utils.py	Save checkpoints (.th files)
-Per checkpoint step	save_stats()	log_utils.py	Save training stats (.pt)
-Per checkpoint step	sync_to_home()	cluster/utils.py	Copy to home storage, cleanup old
-Key Data Flows
-Dataset Loading: H.dataset_path → OctupleDataset or SubseqSampler → batches to GPU
-Model Instantiation: H.model (e.g., "octuple_ddpm") → get_sampler() → PyTorch model
-Config Precedence: CLI args lowest priority → base.yaml → models.yaml → user config → --set highest
-Checkpoint Path: runs/{model_id}/checkpoints/{model|ema|optim}_{step}.th
-Stats Path: runs/{model_id}/stats/stats_{step}.pt
-Cluster Sync: After each save → sync_to_home() copies to home, deletes older versions
