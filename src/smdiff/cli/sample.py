@@ -241,6 +241,10 @@ def main():
             print(f"Batch {i+1}/{num_batches} finished.")
 
     final_samples = np.concatenate(all_samples, axis=0)
+    
+    # Debug: Check shape
+    print(f"Generated samples shape: {final_samples.shape}")
+    print(f"Expected shape: ({args.n_samples}, {H.NOTES}, 8) = ({args.n_samples}, 1024, 8)")
 
     # 6. Save directly to MIDI
     out_dir = os.path.join(args.load_dir, "samples", args.task)
