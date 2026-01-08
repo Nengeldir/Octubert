@@ -19,7 +19,7 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from hparams.set_up_hparams import get_sampler_hparams
-from smdiff.utils.sampler_utils import get_sampler, get_samples
+from smdiff.utils.sampler_utils import get_sampler, get_samples, ns_to_np
 from smdiff.utils.log_utils import load_model
 from smdiff.tasks import resolve_task_id
 from smdiff.configs.loader import load_config
@@ -61,8 +61,12 @@ def get_args():
     # Infilling Config
     parser.add_argument("--mask_start_bar", type=int, default=16)
     parser.add_argument("--mask_end_bar", type=int, default=32)
-    parser.add_argument("--input_midi_dir", type=str, default="data/POP909",
-                        help="Directory with MIDI files for infilling ground truth")
+    parser.add_argument("--input_midi", type=str, default=None,
+                        help="MIDI file for infill task (single file)")
+    parser.add_argument("--input_midi_dir", type=str, default=None,
+                        help="Directory of MIDI files for infill task (multiple conditionings)")
+    parser.add_argument("--samples_per_midi", type=int, default=1,
+                        help="How many samples to generate per conditioning MIDI")
     
     # Output
     parser.add_argument("--output_dir", type=str, default=None,
@@ -99,9 +103,40 @@ def load_samples_from_dir(sample_dir, n_samples=None):
     return samples
 
 
-def generate_samples(args, H, tokenizer_id, device):
-    """Generate samples for evaluation."""
-    print(f"Generating {args.n_samples} samples...")
+def setup_infilling(args, tokenizer_id):
+    """Prepare conditioning tokens for infilling from one or many MIDIs."""
+    midi_files = []
+    if args.input_midi_dir:
+        from glob import glob
+        midi_files = sorted(glob(os.path.join(args.input_midi_dir, "*.mid")))
+        if not midi_files:
+            raise ValueError(f"No MIDI files found in --input_midi_dir={args.input_midi_dir}")
+    elif args.input_midi:
+        midi_files = [args.input_midi]
+    else:
+        raise ValueError("Infill generation requires --input_midi or --input_midi_dir")
+
+    bars = 64
+    tokens_list = []
+    for midi_path in midi_files:
+        print(f"Conditioning on MIDI: {midi_path}")
+        with open(midi_path, 'rb') as f:
+            ns = midi_to_note_sequence(f.read())
+        tokens = ns_to_np(ns, bars, tokenizer_id)
+        if tokens.ndim == 2:
+            tokens = tokens[np.newaxis, :]
+        tokens_rep = np.repeat(tokens, args.samples_per_midi, axis=0)
+        tokens_list.append(tokens_rep)
+
+    tokens = np.concatenate(tokens_list, axis=0)
+    if args.n_samples:
+        tokens = tokens[:args.n_samples]
+
+    return tokens
+
+
+def generate_samples(args, H, tokenizer_id, device, task):
+    """Generate samples for evaluation (supports uncond and infill)."""
     
     # Load model
     sampler = get_sampler(H).to(device)
@@ -140,6 +175,14 @@ def generate_samples(args, H, tokenizer_id, device):
     
     sampler.eval()
     
+    conditioning = None
+    original_tokens = None
+    if task == "infill":
+        conditioning_np = setup_infilling(args, tokenizer_id)
+        args.n_samples = conditioning_np.shape[0]
+        original_tokens = conditioning_np.copy()
+        conditioning = torch.from_numpy(conditioning_np).long().to(device)
+
     # Generate samples
     all_samples = []
     num_batches = (args.n_samples + args.batch_size - 1) // args.batch_size
@@ -147,24 +190,28 @@ def generate_samples(args, H, tokenizer_id, device):
     with torch.no_grad():
         for i in range(num_batches):
             current_b = min(args.batch_size, args.n_samples - len(all_samples))
+            b_x_T = conditioning[:current_b] if conditioning is not None else None
             
             batch_out = get_samples(
                 sampler,
                 H.sample_steps,
-                x_T=None,
+                x_T=b_x_T,
                 b=current_b
             )
             
             all_samples.append(batch_out)
             print(f"Batch {i+1}/{num_batches} finished")
+            if conditioning is not None:
+                conditioning = conditioning[current_b:]
     
     final_samples = np.concatenate(all_samples, axis=0)
     print(f"Generated samples shape: {final_samples.shape}")
     
     # Convert to list of (T, C) arrays
     samples = [final_samples[i] for i in range(len(final_samples))]
+    originals = [original_tokens[i] for i in range(len(final_samples))] if original_tokens is not None else None
     
-    return samples
+    return samples, originals
 
 
 def load_training_data(dataset_id, n_samples=1000):
@@ -276,6 +323,8 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
     print(f"Metrics output directory: {args.output_dir}")
     
+    generated_originals = None
+
     # Load or generate samples
     if args.sample_dir:
         generated_samples = load_samples_from_dir(args.sample_dir, args.n_samples)
@@ -317,7 +366,7 @@ def main():
         if args.sample_steps > 0:
             H.sample_steps = args.sample_steps
         
-        generated_samples = generate_samples(args, H, tokenizer_id, args.device)
+        generated_samples, generated_originals = generate_samples(args, H, tokenizer_id, args.device, args.task)
         
         # Save samples if requested
         if args.save_samples:
@@ -340,9 +389,12 @@ def main():
         )
     
     elif args.task == "infill":
-        # For infilling, we need original samples as ground truth
-        # Generate same originals that would be used in infilling
-        original_samples = train_samples[:len(generated_samples)]
+        # For infilling, prefer originals from conditioning if generation was used
+        if generated_originals is not None:
+            original_samples = generated_originals
+        else:
+            # Fallback: slice training data
+            original_samples = train_samples[:len(generated_samples)]
         
         # Convert bar indices to steps
         mask_start_step = args.mask_start_bar * 16

@@ -29,7 +29,7 @@ python -c "import torch; print('Torch:', torch.__version__, 'CUDA:', torch.cuda.
 MODEL_ID="octuple_ddpm"
 RUN_DIR="runs/octuple_ddpm_trio_octuple"  # Update to your actual run directory
 DATASET_ID="pop909_trio_octuple"
-N_SAMPLES=100
+N_SAMPLES=4
 
 # Navigate to repository
 cd ~/Octubert  # Update to your repository path

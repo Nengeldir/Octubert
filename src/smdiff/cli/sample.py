@@ -48,7 +48,9 @@ def get_args():
     parser.add_argument("--bars", type=int, default=None, help="Number of bars (auto-detected if not specified)")
     
     # Infilling Condition
-    parser.add_argument("--input_midi", type=str, default="data/POP909/001/001.mid", help="MIDI file for infill task")
+    parser.add_argument("--input_midi", type=str, default=None, help="MIDI file for infill task (single file)")
+    parser.add_argument("--input_midi_dir", type=str, default=None, help="Directory of MIDI files for infill task (use multiple conditionings)")
+    parser.add_argument("--samples_per_midi", type=int, default=1, help="How many samples to generate per conditioning MIDI")
     parser.add_argument("--mask_start_bar", type=int, default=16)
     parser.add_argument("--mask_end_bar", type=int, default=32)
     
@@ -60,32 +62,46 @@ def get_args():
     return parser.parse_args()
 
 def setup_infilling(args, H, tokenizer_id, device):
-    """Prepares conditioning for Infilling - extracts 64 bars from input MIDI."""
-    if not args.input_midi or not os.path.exists(args.input_midi):
-        raise ValueError("Task 'infill' requires valid --input_midi.")
+    """Prepares conditioning for Infilling - extracts 64 bars from one or many input MIDIs."""
+    midi_files = []
+    if args.input_midi_dir:
+        from glob import glob
+        midi_files = sorted(glob(os.path.join(args.input_midi_dir, "*.mid")))
+        if not midi_files:
+            raise ValueError(f"No MIDI files found in --input_midi_dir={args.input_midi_dir}")
+    elif args.input_midi:
+        midi_files = [args.input_midi]
+    else:
+        raise ValueError("Task 'infill' requires --input_midi or --input_midi_dir.")
 
-    print(f"Processing input MIDI for infilling: {args.input_midi}")
-    with open(args.input_midi, 'rb') as f:
-        ns = midi_to_note_sequence(f.read())
-
-    # Convert to tokens - always extract 64 bars
     bars = 64
-    tokens = ns_to_np(ns, bars, tokenizer_id) 
-    # tokens shape: (T, C) for single sequence
-    # Expand to batch: (B, T, C)
-    if tokens.ndim == 2:
-        tokens = tokens[np.newaxis, :]  # (1, T, C)
-    tokens = np.repeat(tokens, args.n_samples, axis=0)
-    
+    tokens_list = []
+    for midi_path in midi_files:
+        print(f"Processing input MIDI for infilling: {midi_path}")
+        with open(midi_path, 'rb') as f:
+            ns = midi_to_note_sequence(f.read())
+        tokens = ns_to_np(ns, bars, tokenizer_id)
+        if tokens.ndim == 2:
+            tokens = tokens[np.newaxis, :]
+        # Repeat per conditioning MIDI
+        tokens_rep = np.repeat(tokens, args.samples_per_midi, axis=0)
+        tokens_list.append(tokens_rep)
+
+    tokens = np.concatenate(tokens_list, axis=0)
+
+    # Trim or cap to requested n_samples if specified
+    if args.n_samples:
+        tokens = tokens[:args.n_samples]
+
     # Create Mask (1=Keep/Known, 0=Masked/Generate)
     mask = np.ones_like(tokens)
-    
+
     is_octuple = "octuple" in tokenizer_id
-    
+
     # Apply Masking Logic
     if is_octuple:
         # Octuple: Scan for Bar tokens (Column 0)
-        for b in range(args.n_samples):
+        for b in range(tokens.shape[0]):
             bar_tokens = tokens[b, :, 0]
             mask_idx = (bar_tokens >= args.mask_start_bar) & (bar_tokens < args.mask_end_bar)
             mask[b, mask_idx, :] = 0
@@ -208,6 +224,8 @@ def main():
 
     if task_spec.id == 'infill':
         x_T, mask = setup_infilling(args, H, tokenizer_id, args.device)
+        # Sync n_samples with actual conditioning batch (may come from many MIDIs)
+        args.n_samples = x_T.shape[0]
     elif task_spec.id == 'uncond':
         pass  # x_T and mask remain None
     else:
