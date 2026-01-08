@@ -31,10 +31,6 @@ RUN_DIR="runs/octuple_ddpm_trio_octuple"  # Update to your actual run directory
 DATASET_ID="pop909_trio_octuple"
 N_SAMPLES=100
 
-# Activate environment
-source ~/miniconda3/etc/profile.d/conda.sh
-conda activate beatmaster
-
 # Navigate to repository
 cd ~/Octubert  # Update to your repository path
 
