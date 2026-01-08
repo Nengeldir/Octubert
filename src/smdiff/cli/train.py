@@ -71,17 +71,6 @@ def build_underlying_argv(cfg: Dict, ns: argparse.Namespace) -> List[str]:
         args += ["--port", str(pick("port"))]
     if pick("masking_strategy"):
         args += ["--masking_strategy", pick("masking_strategy")]
-        
-    if pick("wandb", False):
-        args += ["--wandb"]
-    
-    wandb_project = pick("wandb_project")
-    if wandb_project:
-        args += ["--wandb_project", str(wandb_project)]
-        
-    wandb_name = pick("wandb_name")
-    if wandb_name:
-        args += ["--wandb_name", str(wandb_name)]
 
     return args
 
@@ -124,6 +113,11 @@ def main():
     parser.add_argument("--load_step", type=int, default=None)
     parser.add_argument("--log_base_dir", type=str, default=None)
     parser.add_argument("--port", type=int, default=None)
+    
+    # wanDB
+    parser.add_argument("--wandb", const=True, action="store_const", default=False, help="Enable WandB logging")
+    parser.add_argument("--wandb_project", type=str, default="smdiff", help="WandB Project Name")
+    parser.add_argument("--wandb_name", type=str, default=None, help="WandB Run Name")
 
     ns = parser.parse_args()
 
@@ -176,6 +170,10 @@ def main():
     H.tokenizer_id = tokenizer_id
     H.dataset_id = ns.dataset_id
     H.model_id = ns.model  # Store canonical model_id for registry lookup
+    
+    H.wandb = ns.wandb
+    H.wanddb_name = ns.wandb_name
+    H.wandb_project = ns.wandb_project
 
     if not H.load_dir:
         H.load_dir = H.project_log_dir
