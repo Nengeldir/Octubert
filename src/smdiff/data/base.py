@@ -37,12 +37,6 @@ class SimpleNpyDataset(torch.utils.data.Dataset):
         # This fixes the "TypeError: can't convert np.ndarray of type numpy.object_"
         if not isinstance(x, np.ndarray) or x.dtype == object:
             x = np.array(x, dtype=np.int64)
-        
-        # --- SHAPE FIX ---
-        # Melody OneHot comes as (Time, 1). We usually want (Time,) for embedding layers.
-        # Trio (Time, 3) and Octuple (Time, 8) are kept as 2D.
-        if x.ndim == 2 and x.shape[1] == 1:
-            x = x.squeeze(1) # Becomes (Time,)
 
         # 2. Random Crop (Data Augmentation)
         length = x.shape[0]
