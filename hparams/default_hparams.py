@@ -60,7 +60,8 @@ class HparamsAbsorbing(HparamsBase):
             self.log_dir = f'log_{self.model}_{self.tracks}_{self.NOTES}'
         if not self.load_dir:
             self.load_dir = self.log_dir
-        self.codebook_size = (90, ) if self.tracks == 'melody' else (90, 90, 512)
+        print("DEEBUG: Tracks: ", self.tracks)
+        self.codebook_size = (90, ) if self.tracks == 'melody_onehot' else (90, 90, 90)
         self.latent_shape = (self.NOTES, len(self.codebook_size))
         self.load_optim = self.load_step != 0
 

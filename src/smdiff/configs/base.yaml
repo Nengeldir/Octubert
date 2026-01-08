@@ -10,7 +10,7 @@ validation_set_size: 0.05
 augment: true
 ema: true
 ema_beta: 0.995
-amp: false
+amp: true
 steps_per_log: 10
 steps_per_eval: 20
 steps_per_checkpoint: 50
