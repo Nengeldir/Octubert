@@ -6,14 +6,14 @@ schmu_conv_vae:
   bert_n_emb: 512
   conv_layers: 1
   conv_len: 4
-  codebook_size: [90]
-  latent_shape: [1024,1]
+  codebook_size: [90, 90, 90]
+  latent_shape: [1024,3]
 
 schmu_tx_vae:
   model: schmu_tx_vae
   internal_model: transformer
-  codebook_size: [90]
-  latent_shape: [1024,1]
+  codebook_size: [90, 90, 90]
+  latent_shape: [1024,3]
 
 octuple_ddpm:
   model: octuple_ddpm
