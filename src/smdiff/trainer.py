@@ -25,11 +25,11 @@ from .cluster import copy_final_model_to_home
 def main(H):
     """
     Main training loop.
-    
     Args:
         H: Hyperparameters object with all training config
     """
 
+    # --- DATA SETUP ---
     data_np = np.load(H.dataset_path, allow_pickle=True)
     midi_data = SimpleNpyDataset(data_np, H.NOTES, tokenizer_id=getattr(H, 'tokenizer_id', None))
     
@@ -39,7 +39,7 @@ def main(H):
             project=H.wandb_project, 
             name=run_name, 
             config=dict(H),
-            dir=H.log_dir # Store wandb local files in the run dir
+            dir=H.log_dir
         )
     
     # Split train/val
@@ -61,88 +61,165 @@ def main(H):
         H.train_steps = int(H.epochs * len(train_loader))
         log(f'Training for {H.epochs} epochs = {H.train_steps} steps')
 
-    # Initialize model (via registry-aware get_sampler)
+    # --- MODEL & OPTIMIZER ---
     sampler = get_sampler(H).cuda()
     optim = torch.optim.Adam(sampler.parameters(), lr=H.lr)
+    scaler = torch.amp.GradScaler("cuda")
 
-    # EMA setup
     if H.ema:
         ema = EMA(H.ema_beta)
         ema_sampler = copy.deepcopy(sampler)
+    else:
+        ema_sampler = None
 
-    # Training state
-    losses = np.array([])
-    val_losses = np.array([])
-    elbo = np.array([])
-    val_elbos = np.array([])
-    mean_losses = np.array([])
-    cons_var = np.array([]), np.array([]), np.array([]), np.array([])
+    # --- STATE TRACKING ---
+    # Using lists for accumulation is faster than np.append
+    history = {
+        'losses': [],
+        'val_losses': [],
+        'mean_losses': [],
+        'elbo': [],
+        'val_elbos': [],
+        'cons_var': ([], [], [], []), # Legacy structure
+    }
+    
     start_step = 0
 
-    # Resume from checkpoint
+    # --- RESUME LOGIC ---
     if H.load_step > 0:
         start_step = H.load_step + 1
-
         sampler = load_model(sampler, H.sampler, H.load_step, H.load_dir, [H.log_dir]).cuda()
         log("Loaded model checkpoint")
         
         if H.ema:
             try:
-                ema_sampler = load_model(
-                    ema_sampler, f'{H.sampler}_ema', H.load_step, H.load_dir, [H.log_dir]
-                )
+                ema_sampler = load_model(ema_sampler, f'{H.sampler}_ema', H.load_step, H.load_dir, [H.log_dir])
             except Exception:
                 ema_sampler = copy.deepcopy(sampler)
                 
         if H.load_optim:
-            optim = load_model(
-                optim, f'{H.sampler}_optim', H.load_step, H.load_dir, [H.log_dir]
-            )
+            optim = load_model(optim, f'{H.sampler}_optim', H.load_step, H.load_dir, [H.log_dir])
             for param_group in optim.param_groups:
                 param_group['lr'] = H.lr
 
         try:
             train_stats = load_stats(H, H.load_step)
+            if train_stats:
+                # Restore history
+                for k in history.keys():
+                    if k in train_stats:
+                        # Convert back to list if needed
+                        val = train_stats[k]
+                        if isinstance(val, np.ndarray): val = val.tolist()
+                        history[k] = val
+                        
+                H.steps_per_log = train_stats.get("steps_per_log", H.steps_per_log)
+                log(f"Resumed stats from step {H.load_step}")
         except Exception:
-            train_stats = None
+            log('No stats file found, starting fresh stats.')
 
-        if train_stats is not None:
-            losses = train_stats["losses"]
-            mean_losses = train_stats["mean_losses"]
-            val_losses = train_stats["val_losses"]
-            val_elbos = train_stats["val_elbos"]
-            elbo = train_stats["elbo"]
-            cons_var = train_stats["cons_var"]
-            H.steps_per_log = train_stats["steps_per_log"]
-            log(f"Resumed from step {H.load_step}: mean_loss={mean_losses[-1]:.6f}, val_loss={val_losses[-1]:.6f}")
-        else:
-            log('No stats file found for loaded model, displaying stats from load step only.')
+    # --- HELPER FUNCTIONS (Closures) ---
+    # These capture H, sampler, optim, history, etc. from the scope above
+    
+    def run_validation(step):
+        """Runs validation loop and logs metrics."""
+        log(f"Evaluating step {step}")
+        sampler.eval()
+        
+        valid_loss, valid_elbo, num_batches = 0.0, 0.0, 0
+        for x in tqdm(val_loader, desc="Validation", leave=False):
+            with torch.no_grad():
+                stats = sampler.train_iter(x.cuda())
+                valid_loss += stats['loss'].item()
+                if H.sampler == 'absorbing':
+                    valid_elbo += stats['vb_loss'].item()
+                num_batches += 1
+        
+        if num_batches > 0:
+            valid_loss /= num_batches
+            valid_elbo /= num_batches
 
-    sampler = sampler.cuda()
+        history['val_losses'].append(valid_loss)
+        history['val_elbos'].append(valid_elbo)
+        
+        log_msg = f"Validation at step {step}: loss={valid_loss:.6f}"
+        if H.sampler == 'absorbing':
+            log_msg += f", elbo={valid_elbo:.6f}"
+        log(log_msg)
+        
+        if getattr(H, 'wandb', False):
+            val_metrics = {"val/loss": valid_loss, "val/step": step}
+            if H.sampler == 'absorbing':
+                val_metrics["val/elbo"] = valid_elbo
+            wandb.log(val_metrics, step=step)
 
-    scaler = torch.amp.GradScaler("cuda")
-    train_iterator = cycle(train_loader)
+    def run_sampling(step):
+        """Generates and saves samples."""
+        log(f"Sampling step {step}")
+        model_to_sample = ema_sampler if H.ema else sampler
+        model_to_sample.eval()
+        
+        samples = get_samples(
+            model_to_sample,
+            H.sample_steps,
+            b=H.show_samples
+        )
+        save_samples(samples, step, H.log_dir)
 
+    def save_checkpoint(step):
+        """Saves model, optimizer, EMA, and stats."""
+        log(f"Saving checkpoint at step {step}")
+        save_model(sampler, H.sampler, step, H.log_dir)
+        save_model(optim, f'{H.sampler}_optim', step, H.log_dir)
+        if H.ema:
+            save_model(ema_sampler, f'{H.sampler}_ema', step, H.log_dir)
+
+        # Prepare stats for saving (convert lists to numpy if preferred, or keep as dict)
+        stats_to_save = {k: np.array(v) for k, v in history.items()}
+        stats_to_save.update({
+            'steps_per_log': H.steps_per_log,
+            'steps_per_eval': H.steps_per_eval,
+        })
+        save_stats(H, stats_to_save, step)
+
+    def flush_logs(step, current_losses_buffer, step_time):
+        """Calculates mean loss from buffer and logs to console/wandb."""
+        if len(current_losses_buffer) == 0: return
+
+        mean_loss = np.mean(current_losses_buffer)
+        history['mean_losses'].append(mean_loss)
+        
+        # Log to console (reconstruct a stats dict for log_stats utils)
+        log_data = {'mean_loss': mean_loss, 'step_time': step_time}
+        log_stats(step, log_data)
+
+        if getattr(H, 'wandb', False):
+            wandb_metrics = {
+                "train/loss": mean_loss,
+                "train/step_time": step_time,
+                "train/lr": optim.param_groups[0]['lr'],
+                "train/step": step
+            }
+            wandb.log(wandb_metrics, step=step)
+
+    # --- TRAINING LOOP ---
+    
+    log(f"Starting training loop from {start_step} to {H.train_steps}...")
     log(f"Sampler params total: {sum(p.numel() for p in sampler.parameters())}")
     
-    # Log tokenizer and masking info if available
-    if hasattr(H, 'tokenizer_id'):
-        log(f"Tokenizer: {H.tokenizer_id}")
-    if hasattr(H, 'masking_strategy') and H.masking_strategy:
-        log(f"Masking strategy: {H.masking_strategy}")
+    train_iterator = cycle(train_loader)
+    current_losses_buffer = [] # Buffer for steps_per_log
 
-    # Training loop
     for step in range(start_step, H.train_steps):
         sampler.train()
-        if H.ema:
-            ema_sampler.train()
+        if H.ema: ema_sampler.train()
         step_start_time = time.time()
-        
-        # LR warmup
-        if H.warmup_iters:
-            if step <= H.warmup_iters:
-                optim_warmup(H, step, optim)
 
+        # 1. Warmup
+        if H.warmup_iters and step <= H.warmup_iters:
+            optim_warmup(H, step, optim)
+
+        # 2. Train Step
         x = augment_note_tensor(H, next(train_iterator))
         x = x.cuda(non_blocking=True)
 
@@ -150,13 +227,11 @@ def main(H):
             optim.zero_grad()
             with torch.amp.autocast("cuda"):
                 stats = sampler.train_iter(x)
-
             scaler.scale(stats['loss']).backward()
             scaler.step(optim)
             scaler.update()
         else:
             stats = sampler.train_iter(x)
-
             if torch.isnan(stats['loss']).any():
                 log(f'Skipping step {step} with NaN loss')
                 continue
@@ -164,120 +239,49 @@ def main(H):
             stats['loss'].backward()
             optim.step()
 
-        losses = np.append(losses, stats['loss'].item())
+        # 3. Record stats
+        loss_val = stats['loss'].item()
+        current_losses_buffer.append(loss_val)
+        history['losses'].append(loss_val) # Full history
+        
+        if H.sampler == 'absorbing':
+            history['elbo'].append(stats['vb_loss'].item())
 
-        sampler.eval()
-        if H.ema:
-            ema_sampler.eval()
-
-        # Logging
-        if step % H.steps_per_log == 0:
-            step_time_taken = time.time() - step_start_time
-            stats['step_time'] = step_time_taken
-            mean_loss = np.mean(losses)
-            stats['mean_loss'] = mean_loss
-            mean_losses = np.append(mean_losses, mean_loss)
-            losses = np.array([])
-
-            log_stats(step, stats)
-            
-            if getattr(H, 'wandb', False):
-                wandb_metrics = {
-                    "train/loss": mean_loss,
-                    "train/step_time": step_time_taken,
-                    "train/lr": optim.param_groups[0]['lr'],
-                    "train/step": step
-                }
-                if H.sampler == 'absorbing':
-                    wandb_metrics["train/vb_loss"] = stats.get('vb_loss', 0)
-                
-                wandb.log(wandb_metrics, step=step)
-
-            if H.sampler == 'absorbing':
-                elbo = np.append(elbo, stats['vb_loss'].item())
-
-        # EMA update
-        if H.ema and step % H.steps_per_update_ema == 0 and step:
+        if H.ema and step % H.steps_per_update_ema == 0 and step > 0:
             ema.update_model_average(ema_sampler, sampler)
 
-        # Sampling
-        if step % H.steps_per_sample == 0 and step:
-            log(f"Sampling step {step}")
-            samples = get_samples(
-                ema_sampler if H.ema else sampler,
-                H.sample_steps,
-                b=H.show_samples
-            )
-            save_samples(samples, step, H.log_dir)
+        # 4. Periodic Actions
+        if step % H.steps_per_log == 0:
+            flush_logs(step, current_losses_buffer, time.time() - step_start_time)
+            current_losses_buffer = []
 
-        # Validation
-        if H.steps_per_eval and step % H.steps_per_eval == 0 and step:
-            min_step = H.steps_per_eval
-            valid_loss, valid_elbo, num_batches = 0.0, 0.0, 0
-            log(f"Evaluating step {step}")
+        if step % H.steps_per_sample == 0 and step > 0:
+            run_sampling(step)
 
-            for x in tqdm(val_loader):
-                with torch.no_grad():
-                    stats = sampler.train_iter(x.cuda())
-                    valid_loss += stats['loss'].item()
-                    if H.sampler == 'absorbing':
-                        valid_elbo += stats['vb_loss'].item()
-                    num_batches += 1
-            valid_loss = valid_loss / num_batches
-            if H.sampler == 'absorbing':
-                valid_elbo = valid_elbo / num_batches
+        if H.steps_per_eval and step % H.steps_per_eval == 0 and step > 0:
+            run_validation(step)
 
-            val_losses = np.append(val_losses, valid_loss)
-            val_elbos = np.append(val_elbos, valid_elbo)
-            log(f"Validation at step {step}: loss={valid_loss:.6f}" + 
-                (f", elbo={valid_elbo:.6f}" if H.sampler == 'absorbing' else ""))
-            
-            if getattr(H, 'wandb', False):
-                val_metrics = {
-                    "val/loss": valid_loss,
-                    "val/step": step
-                }
-                if H.sampler == 'absorbing':
-                    val_metrics["val/elbo"] = valid_elbo
-                
-                wandb.log(val_metrics, step=step)
-
-        # Checkpointing
         if step % H.steps_per_checkpoint == 0 and step > H.load_step:
-            save_model(sampler, H.sampler, step, H.log_dir)
-            save_model(optim, f'{H.sampler}_optim', step, H.log_dir)
+            save_checkpoint(step)
 
-            if H.ema:
-                save_model(ema_sampler, f'{H.sampler}_ema', step, H.log_dir)
+    # --- FINAL WRAP UP ---
+    log("Training loop finished. Performing final operations...")
+    
+    # 1. Final Log Flush (if any steps remaining)
+    if len(current_losses_buffer) > 0:
+        flush_logs(H.train_steps, current_losses_buffer, 0.0)
 
-            train_stats = {
-                'losses': losses,
-                'mean_losses': mean_losses,
-                'val_losses': val_losses,
-                'elbo': elbo,
-                'val_elbos': val_elbos,
-                'cons_var': cons_var,
-                'steps_per_log': H.steps_per_log,
-                'steps_per_eval': H.steps_per_eval,
-            }
-            save_stats(H, train_stats, step)
-            
-    print(f"Training complete. Saving final model at step {H.train_steps}...")
-    save_model(sampler, H.sampler, H.train_steps, H.log_dir)
-    save_model(optim, f'{H.sampler}_optim', H.train_steps, H.log_dir)
-    if H.ema:
-        save_model(ema_sampler, f'{H.sampler}_ema', H.train_steps, H.log_dir)
-        
-    samples = get_samples(
-            ema_sampler if H.ema else sampler,
-            H.sample_steps,
-            b=H.show_samples
-        )
-    save_samples(samples, H.train_steps, H.log_dir)
-        
+    # 2. Final Validation
+    run_validation(H.train_steps)
+
+    # 3. Final Sampling
+    run_sampling(H.train_steps)
+
+    # 4. Final Save
+    save_checkpoint(H.train_steps)
+
     if getattr(H, 'wandb', False):
         wandb.finish()
         
-    # Auto-Sync to Project Dir
     if hasattr(H, 'project_log_dir') and H.log_dir != H.project_log_dir:
         copy_final_model_to_home(H.log_dir, H.project_log_dir)
