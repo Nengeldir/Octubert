@@ -25,50 +25,50 @@ class SimpleNpyDataset(torch.utils.data.Dataset):
         return len(self.data)
         
     def __getitem__(self, idx):
-        # 1. Get the full sequence
+        # 1. Get the raw sequence
         x = self.data[idx]
         
-        # Handle object dtype arrays (from pickled .npy files)
-        if isinstance(x, np.ndarray) and x.dtype == object:
-            # Object arrays can't be directly converted to torch tensors
-            # Try to convert to a regular numeric array first
-            try:
-                x = np.asarray(x, dtype=np.int64)
-            except (ValueError, TypeError):
-                # If that fails, the data might be nested - extract the actual array
-                if hasattr(x, '__getitem__') and len(x) > 0:
-                    x = x[0] if isinstance(x[0], np.ndarray) else x
-                x = np.asarray(x, dtype=np.int64)
-        
-        # Ensure we have a proper numpy array at this point
-        if not isinstance(x, np.ndarray):
+        # --- TYPE FIX ---
+        # If x is a 0-d object array wrapping another array, extract it
+        if isinstance(x, np.ndarray) and x.ndim == 0 and x.dtype == object:
+            x = x.item()
+            
+        # If it's a list or object-dtype array, force conversion to int64
+        # This fixes the "TypeError: can't convert np.ndarray of type numpy.object_"
+        if not isinstance(x, np.ndarray) or x.dtype == object:
             x = np.array(x, dtype=np.int64)
         
-        # 2. Random Crop (Common to both)
+        # --- SHAPE FIX ---
+        # Melody OneHot comes as (Time, 1). We usually want (Time,) for embedding layers.
+        # Trio (Time, 3) and Octuple (Time, 8) are kept as 2D.
+        if x.ndim == 2 and x.shape[1] == 1:
+            x = x.squeeze(1) # Becomes (Time,)
+
+        # 2. Random Crop (Data Augmentation)
         length = x.shape[0]
         if length > self.seq_len:
+            # Shift window randomly
             start = np.random.randint(0, length - self.seq_len + 1)
             x = x[start : start + self.seq_len]
         
-        # 3. Pad (Common logic, handles shapes automatically)
+        # 3. Padding (Safety for short sequences)
         elif length < self.seq_len:
             pad_len = self.seq_len - length
-            # Use ndim here just for the padding command structure, 
-            # which is harmless since it's just numpy syntax.
             if x.ndim == 1:
+                # OneHot (Time,) -> Pad end
                 x = np.pad(x, (0, pad_len), 'constant')
             else:
+                # Octuple/Trio (Time, Channels) -> Pad time dimension only
                 x = np.pad(x, [(0, pad_len), (0, 0)], 'constant')
 
-        # 4. EXPLICIT Octuple Logic (Triggered by ID, not shape)
-        if self.is_octuple:
-            # Bar Normalization:
-            # If we cropped into the middle of a song, reset Bar numbers to start at 0.
+        # 4. Octuple Bar Normalization
+        if self.is_octuple and x.ndim == 2 and x.shape[1] == 8:
+            # Only run if we have data (non-padding)
             if x.shape[0] > 0:
                 first_bar = x[0, 0]
                 if first_bar > 0:
                     x[:, 0] -= first_bar
                     x[:, 0] = np.maximum(x[:, 0], 0)
 
-        # 5. Return
+        # 5. Return as PyTorch LongTensor
         return torch.from_numpy(x).long()

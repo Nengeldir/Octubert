@@ -34,7 +34,6 @@ python3 src/smdiff/cli/train.py \
   --set train_steps=800 \
   --set steps_per_log=10 \
   --set steps_per_eval=100 \
-  --set steps_per_checkpoint=200 \
-  --set dataset_path=data/POP909_melody.npy
+  --set steps_per_checkpoint=200
 
 echo "Job finished at $(date)"

@@ -39,5 +39,5 @@ layers_per_level: 2
 conv_width: 4
 codebook_size: [90]
 latent_shape: [1024,1]
-dataset_path: data/POP909_melody.npy
+dataset_path: data/POP909_trio.npy
 port: 8097
