@@ -45,6 +45,7 @@ python3 -m smdiff.cli.sample \
   --model ${MODEL} \
   --load_dir ${RUN_DIR} \
   --task uncond \
+  --load_step 400 \
   --n_samples ${N_SAMPLES} \
   --sample_steps ${SAMPLE_STEPS} \
   --batch_size ${BATCH_SIZE}
@@ -61,6 +62,7 @@ python3 -m smdiff.cli.sample \
   --input_midi data/POP909/001/001.mid \
   --mask_start_bar 4 \
   --mask_end_bar 16 \
+  --load_step 400 \
   --n_samples ${N_SAMPLES} \
   --sample_steps ${SAMPLE_STEPS} \
   --batch_size ${BATCH_SIZE}
