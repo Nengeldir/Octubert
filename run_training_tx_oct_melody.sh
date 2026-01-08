@@ -31,7 +31,7 @@ python -c "import torch; print('Torch:', torch.__version__, 'CUDA:', torch.cuda.
 python3 src/smdiff/cli/train.py \
   --model octuple_ddpm \
   --set tracks=melody_octuple \
-  --set dataset_path=data/POP909_trio_melody.npy \
+  --set dataset_path=data/POP909_melody_octuple.npy \
   --set batch_size=4 \
   --set train_steps=400 \
   --set steps_per_log=10 \
