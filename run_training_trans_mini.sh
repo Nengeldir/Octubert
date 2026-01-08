@@ -35,8 +35,9 @@ python3 src/smdiff/cli/train.py \
   --set batch_size=4 \
   --set train_steps=400 \
   --set steps_per_log=10 \
+  --set steps_per_sample=200 \
   --set steps_per_eval=100 \
-  --set steps_per_checkpoint=200 \
+  --set steps_per_checkpoint=400 \
   --wandb \
   --wandb_project "octubert-music" \
   --wandb_name "mini-test-schmu-tx-vae-melody" \
