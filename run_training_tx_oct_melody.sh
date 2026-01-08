@@ -30,8 +30,8 @@ python -c "import torch; print('Torch:', torch.__version__, 'CUDA:', torch.cuda.
 # Run unified training CLI with small settings
 python3 src/smdiff/cli/train.py \
   --model octuple_ddpm \
-  --set tracks=trio_octuple \
-  --set dataset_path=data/POP909_trio_octuple.npy \
+  --set tracks=melody_octuple \
+  --set dataset_path=data/POP909_trio_melody.npy \
   --set batch_size=4 \
   --set train_steps=400 \
   --set steps_per_log=10 \
@@ -40,6 +40,6 @@ python3 src/smdiff/cli/train.py \
   --set steps_per_checkpoint=400 \
   --wandb \
   --wandb_project "octubert-music" \
-  --wandb_name "mini-test-octuple-ddpm-trio" \
+  --wandb_name "mini-test-octuple-ddpm-melody" \
 
 echo "Job finished at $(date)"

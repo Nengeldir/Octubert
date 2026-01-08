@@ -31,6 +31,7 @@ def main(H):
 
     # --- DATA SETUP ---
     data_np = np.load(H.dataset_path, allow_pickle=True)
+    log("Tokenizer ID: " + H.tokenizer_id)
     midi_data = SimpleNpyDataset(data_np, H.NOTES, tokenizer_id=getattr(H, 'tokenizer_id', None))
     
     if getattr(H, 'wandb', False):
