@@ -199,6 +199,11 @@ def samples_2_noteseq(np_samples, tokenizer_id=None):
     Convert numpy samples to note_seq objects using tokenizer registry.
     Handles fixing out-of-range tokens from early training.
     """
+    
+    # expected shape for melody encoder is (samples, Time,)
+    if tokenizer_id == "melody" and np_samples.ndim == 3 and np_samples.shape[-1] == 1:
+        samples = np_samples.squeeze(-1)
+    
     if tokenizer_id:
         from ..tokenizers.registry import TOKENIZER_REGISTRY
         spec = TOKENIZER_REGISTRY.get(tokenizer_id)
@@ -209,26 +214,43 @@ def samples_2_noteseq(np_samples, tokenizer_id=None):
             is_octuple = 'octuple' in tokenizer_id
             
             # --- SAFETY CLAMP: Fix for "Event out of range" ---
-            max_val = None
+            if not is_octuple:
+                max_val = None
+                
+                # 1. Explicitly defined sizes for known converters
+                if tokenizer_id in ['melody', 'trio']:
+                    max_val = 108 # HIGHEST MIDI TON IN MAGENTA PIPELINES FOR PIANO
+                
+                # 2. Dynamic check for other converters (like octuple)
+                elif hasattr(converter, 'input_depth'): 
+                    max_val = converter.input_depth - 1
+                elif hasattr(converter, '_vocab_size'):
+                    max_val = converter._vocab_size - 1
+                
+                # 3. Apply Clamp
+                if max_val is not None:
+                    # Identify out-of-bounds indices
+                    mask = np_samples > max_val
+                    if np.any(mask):
+                        # Clamp to max_val (usually 'Silence'/'No Event')
+                        np_samples[mask] = 0
+                # --------------------------------------------------
             
-            # 1. Explicitly defined sizes for known converters
-            if tokenizer_id in ['melody', 'trio']:
-                max_val = 108 # HIGHEST MIDI TON IN MAGENTA PIPELINES FOR PIANO
-            
-            # 2. Dynamic check for other converters (like octuple)
-            elif hasattr(converter, 'input_depth'): 
-                max_val = converter.input_depth - 1
-            elif hasattr(converter, '_vocab_size'):
-                max_val = converter._vocab_size - 1
-            
-            # 3. Apply Clamp
-            if max_val is not None:
-                # Identify out-of-bounds indices
-                mask = np_samples > max_val
-                if np.any(mask):
-                    # Clamp to max_val (usually 'Silence'/'No Event')
-                    np_samples[mask] = 0
-            # --------------------------------------------------
+            if is_octuple:
+                # Octuple Structure: [Bar, Pos, Inst, Pitch, Dur, Vel, Tempo, TimeSig]
+                # Index 2 is Instrument.
+                
+                if 'melody' in tokenizer_id:
+                    # For Melody: Force Instrument to 0 (Grand Piano)
+                    # This cleans up noise where the model hallucinates other instruments
+                    np_samples[:, :, 2] = 0
+                    
+                elif 'trio' in tokenizer_id:
+                    # For Trio: We expect Inst IDs 0, 1, 2 (Melody, Bridge, Piano)
+                    # The model might predict 5, 99, etc. 
+                    # We simply Modulo 3 to force them back into valid track IDs
+                    # OR clamp them. Modulo preserves variance better usually.
+                    np_samples[:, :, 2] = np_samples[:, :, 2] % 3
             
             return converter.from_tensors(np_samples)
             

@@ -1,225 +1,253 @@
 import argparse
 import os
 import sys
-from typing import Dict, List
-
+import time
 import numpy as np
 import torch
-from note_seq import note_sequence_to_midi_file
+import yaml
+from note_seq import midi_to_note_sequence
 
+# Ensure repository root is on sys.path
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+    
+# Also ensure 'src' is on sys.path so 'smdiff' package resolves when running by path
+_SRC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if _SRC_DIR not in sys.path:
+    sys.path.insert(0, _SRC_DIR)
+
+# Internal imports
 from hparams.set_up_hparams import get_sampler_hparams
+from smdiff.utils.sampler_utils import get_sampler, get_samples, ns_to_np, save_generated_samples
 from smdiff.utils.log_utils import load_model
-from smdiff.data.octuple import OctupleEncoding
-from smdiff.utils.sampler_utils import get_samples, np_to_ns, get_sampler
-
-
-from smdiff.registry import resolve_model_id
 from smdiff.tasks import resolve_task_id
-from smdiff.masking import resolve_masking_id
-from smdiff.tokenizers import resolve_tokenizer_id, TOKENIZER_REGISTRY
 from smdiff.configs.loader import load_config
+from smdiff.registry import resolve_model_id
+from smdiff.tokenizers import resolve_tokenizer_id
 from smdiff.data import apply_dataset_to_config
 
-# Reuse masking logic from the legacy infilling script
-from sample_inpainting import apply_mask
+def get_args():
+    parser = argparse.ArgumentParser(description="Sampling / Infilling CLI")
+    
+    # Model Config
+    parser.add_argument("--model", type=str, required=True, help="Model ID")
+    parser.add_argument("--tokenizer_id", type=str, default=None, help="Tokenizer ID (auto-detected if not specified)")
+    parser.add_argument("--dataset_id", type=str, default=None, help="Dataset ID for auto-config")
+    parser.add_argument("--load_dir", type=str, required=True, help="Path to run directory")
+    parser.add_argument("--load_step", type=int, default=0, help="Step to load (0 = auto-detect best/latest)")
+    parser.add_argument("--config", type=str, default=None, help="Optional config override")
+    
+    # Task Config
+    parser.add_argument("--task", type=str, default="uncond", help="Task ID: 'uncond' or 'infill'")
+    
+    # Generation Settings
+    parser.add_argument("--n_samples", type=int, default=4)
+    parser.add_argument("--sample_steps", type=int, default=0, help="Diffusion steps (0 = use config default)")
+    parser.add_argument("--batch_size", type=int, default=4)
+    parser.add_argument("--bars", type=int, default=None, help="Number of bars (auto-detected if not specified)")
+    
+    # Infilling Condition
+    parser.add_argument("--input_midi", type=str, default="data/POP909/001/001.mid", help="MIDI file for infill task")
+    parser.add_argument("--mask_start_bar", type=int, default=16)
+    parser.add_argument("--mask_end_bar", type=int, default=32)
+    
+    # Hardware
+    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--ema", action="store_true", default=True, help="Use EMA weights (default: True)")
+    parser.add_argument("--no-ema", dest="ema", action="store_false", help="Don't use EMA weights")
 
+    return parser.parse_args()
 
-def build_underlying_argv(cfg: Dict, ns: argparse.Namespace) -> List[str]:
-    """Translate unified CLI args to the legacy hparams parser argv."""
-    spec = resolve_model_id(ns.model)
+def setup_infilling(args, H, tokenizer_id, device):
+    """Prepares conditioning for Infilling - extracts 64 bars from input MIDI."""
+    if not args.input_midi or not os.path.exists(args.input_midi):
+        raise ValueError("Task 'infill' requires valid --input_midi.")
 
-    def pick(key, default=None):
-        val = getattr(ns, key, None)
-        return val if val is not None else cfg.get(key, default)
+    print(f"Processing input MIDI for infilling: {args.input_midi}")
+    with open(args.input_midi, 'rb') as f:
+        ns = midi_to_note_sequence(f.read())
 
-    args = [
-        "--model", spec.internal_model,
-        "--dataset_path", pick("dataset_path"),
-        "--batch_size", str(pick("batch_size", 16)),
-        "--n_samples", str(pick("n_samples", 10)),
-        "--bars", str(pick("bars", 64)),
-        "--tracks", pick("tracks", "melody"),
+    # Convert to tokens - always extract 64 bars
+    bars = 64
+    tokens = ns_to_np(ns, bars, tokenizer_id) 
+    # tokens shape: (T, C) for single sequence
+    # Expand to batch: (B, T, C)
+    if tokens.ndim == 2:
+        tokens = tokens[np.newaxis, :]  # (1, T, C)
+    tokens = np.repeat(tokens, args.n_samples, axis=0)
+    
+    # Create Mask (1=Keep/Known, 0=Masked/Generate)
+    mask = np.ones_like(tokens)
+    
+    is_octuple = "octuple" in tokenizer_id
+    
+    # Apply Masking Logic
+    if is_octuple:
+        # Octuple: Scan for Bar tokens (Column 0)
+        for b in range(args.n_samples):
+            bar_tokens = tokens[b, :, 0]
+            mask_idx = (bar_tokens >= args.mask_start_bar) & (bar_tokens < args.mask_end_bar)
+            mask[b, mask_idx, :] = 0
+    else:
+        # Grid: Fixed steps (16 per bar)
+        notes = H.NOTES if hasattr(H, 'NOTES') else H.get('NOTES', 1024)
+        start_idx = args.mask_start_bar * 16
+        end_idx = args.mask_end_bar * 16
+        start_idx = max(0, min(start_idx, notes))
+        end_idx = max(0, min(end_idx, notes))
+        mask[:, start_idx:end_idx] = 0
+
+    return torch.from_numpy(tokens).long().to(device), torch.from_numpy(mask).float().to(device)
+
+def main():
+    args = get_args()
+    
+    # 1. Validate Task
+    task_spec = resolve_task_id(args.task)
+    print(f"Running Task: {task_spec.description}")
+
+    # 2. Load Config and merge with dataset if provided
+    config_path = args.config
+    if not config_path:
+        # Auto-detect config in load_dir
+        for c in ["configs/config.yaml", "configs/hparams.yaml"]:
+            p = os.path.join(args.load_dir, c)
+            if os.path.exists(p):
+                config_path = p
+                print(f"Auto-detected config: {config_path}")
+                break
+    
+    cfg = load_config(args.model, config_path, None)
+    
+    # Apply dataset config if specified
+    if args.dataset_id:
+        cfg = apply_dataset_to_config(cfg, args.dataset_id)
+    
+    # Determine tokenizer_id
+    tokenizer_id = args.tokenizer_id or cfg.get("tokenizer_id") or cfg.get("tracks", "melody")
+    resolve_tokenizer_id(tokenizer_id)  # Validate
+    
+    # Force 64 bars for generation
+    bars = 64
+    
+    # Build argv for legacy hparams system
+    model_spec = resolve_model_id(args.model)
+    
+    argv = [
+        sys.argv[0],
+        "--model", model_spec.internal_model,
+        "--tracks", cfg.get("tracks", "octuple" if "octuple" in tokenizer_id else "melody"),
+        "--bars", str(bars),
+        "--batch_size", str(args.batch_size),
     ]
-
-    # Optional flags/values
-    if pick("masking_strategy"):
-        args += ["--masking_strategy", pick("masking_strategy")]
-    if pick("load_dir"):
-        args += ["--load_dir", pick("load_dir")]
-    if pick("load_step"):
-        args += ["--load_step", str(pick("load_step"))]
-    if pick("log_base_dir"):
-        args += ["--log_base_dir", pick("log_base_dir")]
-    if pick("port"):
-        args += ["--port", str(pick("port"))]
-    if pick("amp", False):
-        args += ["--amp"]
-    if pick("ema", True):
-        args += ["--ema"]
-
-    return args
-
-
-def load_hparams_for_sample(cfg: Dict, ns: argparse.Namespace):
-    translated_argv = [sys.argv[0]] + build_underlying_argv(cfg, ns)
+    
+    # Add optional params
+    if cfg.get("dataset_path"):
+        argv += ["--dataset_path", cfg["dataset_path"]]
+    
+    # Swap sys.argv temporarily to use legacy hparams system
     prev_argv = sys.argv
-    sys.argv = translated_argv
+    sys.argv = argv
     try:
         H = get_sampler_hparams('sample')
     finally:
         sys.argv = prev_argv
-    return H
-
-
-def decode_and_save_sequence(tokens: np.ndarray, out_path: str, tokenizer_id: str):
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    spec = TOKENIZER_REGISTRY[tokenizer_id]
-    # Lightweight decode based on tokenizer id; reuse OctupleEncoding for octuple
-    if tokenizer_id == "octuple":
-        encoder = OctupleEncoding()
-        midi_obj = encoder.decode(tokens)
-        midi_obj.dump(out_path) # type: ignore
-    else:
-        # One-hot family decoders use np_to_ns for now
-        note_sequence_to_midi_file(np_to_ns(tokens)[0], out_path)
-
-
-def run_unconditional(H, outdir: str, tokenizer_id: str):
-    H.sample_schedule = "rand"
-    sampler = get_sampler(H).cuda()
-    sampler = load_model(sampler, f"{H.sampler}_ema", H.load_step, H.load_dir)
-    sampler.eval()
-
-    n_done = 0
-    while n_done < H.n_samples:
-        sa = get_samples(sampler, H.sample_steps)
-        for sample_idx, sample_tokens in enumerate(sa):
-            out_path = os.path.join(outdir, f"sample_{n_done + sample_idx}.mid")
-            decode_and_save_sequence(sample_tokens, out_path, tokenizer_id)
-            n_done += 1
-            if n_done >= H.n_samples:
-                break
-        print(f"{n_done}/{H.n_samples} saved to {outdir}")
-
-
-def build_dataset(H):
-    if os.path.isdir(H.dataset_path):
-        return OctupleDataset(H.dataset_path, H.NOTES)
-    data = np.load(H.dataset_path, allow_pickle=True)
-
-    class SimpleDataset:
-        def __init__(self, data):
-            self.data = data
-        def __len__(self):
-            return len(self.data)
-        def __getitem__(self, idx):
-            return self.data[idx]
-    return SimpleDataset(data)
-
-
-def run_infill(H, outdir: str, tokenizer_id: str):
-    if H.masking_strategy is None:
-        raise ValueError("--masking_strategy is required for infill task")
-    resolve_masking_id(H.masking_strategy)
-
-    sampler = get_sampler(H).cuda()
-    sampler = load_model(sampler, f"{H.sampler}_ema", H.load_step, H.load_dir)
-    sampler.eval()
-
-    dataset = build_dataset(H)
-    n = min(H.n_samples, len(dataset))
-    indices = np.random.choice(len(dataset), n, replace=False)
-
-    os.makedirs(outdir, exist_ok=True)
-    encoder = OctupleEncoding()
-
-    for i, idx in enumerate(indices):
-        item = dataset[idx]
-        x_0 = torch.tensor(item).unsqueeze(0).cuda().long()
-        mask = apply_mask(x_0, H.masking_strategy)
-
-        x_T = x_0.clone()
-        for k in range(x_T.shape[-1]):
-            m_k = mask[:, :, k]
-            x_T[:, :, k][m_k] = sampler.mask_id[k]
-
-        with torch.no_grad():
-            sample_out = get_samples(sampler, H.sample_steps, x_T=x_T)
-
-        orig_path = os.path.join(outdir, f"sample_{i}_original.mid")
-        infill_path = os.path.join(outdir, f"sample_{i}_infill.mid")
-        masked_path = os.path.join(outdir, f"sample_{i}_masked.npy")
-
-        if tokenizer_id == "octuple":
-            midi_orig = encoder.decode(x_0.cpu().numpy()[0])
-            midi_orig.dump(orig_path) # type: ignore
-        else:
-            decode_and_save_sequence(x_0.cpu().numpy()[0], orig_path, tokenizer_id)
-
-        np.save(masked_path, x_T.cpu().numpy())
-
-        if tokenizer_id == "octuple":
-            midi_infill = encoder.decode(sample_out[0])
-            midi_infill.dump(infill_path) # type: ignore
-        else:
-            decode_and_save_sequence(sample_out[0], infill_path, tokenizer_id)
-        print(f"[{i+1}/{n}] saved infill result -> {infill_path}")
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Unified sampling CLI (tasks only affect sampling/eval)")
-    parser.add_argument("--config", type=str, default=None,
-                        help="Optional experiment config YAML to merge")
-    parser.add_argument("--set", action="append", default=[],
-                        help="Override config keys, e.g. --set n_samples=8")
-    parser.add_argument("--model", required=True, type=str,
-                        help="Model id: schmu_conv_vae | schmu_tx_vae | octuple_ddpm | octuple_mask_ddpm | musicbert_ddpm")
-    parser.add_argument("--task", required=True, type=str, choices=["uncond", "infill"],
-                        help="Sampling task")
-    parser.add_argument("--dataset_id", type=str, default=None,
-                        help="Dataset id from DATASET_REGISTRY (e.g., pop909_melody, pop909_octuple)")
-    parser.add_argument("--dataset_path", type=str, default=None)
-    parser.add_argument("--bars", type=int, default=None)
-    parser.add_argument("--tracks", type=str, default=None)
-    parser.add_argument("--masking_strategy", type=str, default=None)
-
-    parser.add_argument("--batch_size", type=int, default=None)
-    parser.add_argument("--n_samples", type=int, default=None)
-    parser.add_argument("--outdir", type=str, default="samples")
-
-    parser.add_argument("--load_dir", type=str, default=None)
-    parser.add_argument("--load_step", type=int, default=None)
-    parser.add_argument("--log_base_dir", type=str, default=None)
-    parser.add_argument("--port", type=int, default=None)
-    parser.add_argument("--amp", action="store_true", default=None)
-    parser.add_argument("--ema", action="store_true", default=None)
-
-    ns = parser.parse_args()
-
-    resolve_task_id(ns.task)  # validate early
-    cfg = load_config(ns.model, ns.config, ns.set)
-    if ns.dataset_id:
-        cfg = apply_dataset_to_config(cfg, ns.dataset_id)
-    dataset_path = cfg.get("dataset_path")
-    if not dataset_path or not os.path.exists(dataset_path):
-        raise FileNotFoundError(
-            f"Dataset not found at '{dataset_path}'. Set --dataset_id or --dataset_path to an existing location."
-        )
-    tokenizer_id = cfg.get("tokenizer_id") or cfg.get("tracks", "melody")
-    resolve_tokenizer_id(tokenizer_id)
-
-    H = load_hparams_for_sample(cfg, ns)
+    
+    # Apply overrides
     H.tokenizer_id = tokenizer_id
-    if not H.load_dir:
-        H.load_dir = os.path.join("runs", ns.model)
-
-    outdir = os.path.join(ns.outdir, ns.task, ns.model)
-
-    if ns.task == "uncond":
-        run_unconditional(H, outdir, tokenizer_id)
+    H.model_id = args.model
+    if args.sample_steps > 0:
+        H.sample_steps = args.sample_steps
+    
+    # 3. Load Model
+    print(f"Loading {args.model} from {args.load_dir}...")
+    sampler = get_sampler(H).to(args.device)
+    
+    # Load weights - prioritize best checkpoint
+    checkpoints_dir = os.path.join(args.load_dir, "checkpoints")
+    
+    if args.load_step == 0:
+        # Default: load best checkpoint
+        if args.ema:
+            # Try ema_best.pt first, then best.pt
+            best_paths = [
+                os.path.join(checkpoints_dir, "ema_best.pt"),
+                os.path.join(checkpoints_dir, "best.pt"),
+            ]
+            print("Using EMA weights.")
+        else:
+            best_paths = [
+                os.path.join(checkpoints_dir, "best.pt"),
+            ]
+        
+        # Find first existing checkpoint
+        checkpoint_path = None
+        for path in best_paths:
+            if os.path.exists(path):
+                checkpoint_path = path
+                print(f"Loading best checkpoint: {os.path.basename(path)}")
+                break
+        
+        if checkpoint_path is None:
+            raise FileNotFoundError(f"No best checkpoint found in {checkpoints_dir}")
+        
+        # Load directly from path
+        state_dict = torch.load(checkpoint_path, map_location=args.device)
+        sampler.load_state_dict(state_dict)
     else:
-        run_infill(H, outdir, tokenizer_id)
+        # Load specific step
+        load_key = f"{H.sampler}_ema" if args.ema else H.sampler
+        print(f"Loading checkpoint from step {args.load_step} ({'EMA' if args.ema else 'non-EMA'})")
+        sampler = load_model(sampler, load_key, args.load_step, args.load_dir)
+    sampler.eval()
 
+    # 4. Prepare Logic based on Task
+    x_T = None
+    mask = None
+
+    if task_spec.id == 'infill':
+        x_T, mask = setup_infilling(args, H, tokenizer_id, args.device)
+    elif task_spec.id == 'uncond':
+        pass  # x_T and mask remain None
+    else:
+        raise NotImplementedError(f"Logic for {task_spec.id} not implemented in main loop yet.")
+
+    # 5. Generate
+    all_samples = []
+    num_batches = (args.n_samples + args.batch_size - 1) // args.batch_size
+    
+    print(f"Starting Generation ({H.sample_steps} steps)...")
+    with torch.no_grad():
+        for i in range(num_batches):
+            current_b = min(args.batch_size, args.n_samples - len(all_samples))
+            
+            # Slice batch conditioning if present
+            b_x_T = x_T[:current_b] if x_T is not None else None
+            
+            # For infilling: mask is applied inside the model via x_T pre-conditioning
+            # The masked regions in x_T are already set to mask_id
+            # So we don't need to pass mask separately to get_samples
+            
+            batch_out = get_samples(
+                sampler, 
+                H.sample_steps, 
+                x_T=b_x_T,
+                b=current_b
+            )
+            
+            # batch_out is already numpy from get_samples
+            all_samples.append(batch_out)
+            print(f"Batch {i+1}/{num_batches} finished.")
+
+    final_samples = np.concatenate(all_samples, axis=0)
+
+    # 6. Save directly to MIDI
+    out_dir = os.path.join(args.load_dir, "samples", args.task)
+    os.makedirs(out_dir, exist_ok=True)
+    
+    save_generated_samples(final_samples, tokenizer_id, out_dir, prefix=f"{args.task}_{int(time.time())}")
+    print("Done.")
 
 if __name__ == "__main__":
     main()

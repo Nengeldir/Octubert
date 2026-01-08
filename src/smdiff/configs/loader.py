@@ -4,7 +4,7 @@ from typing import Dict, Iterable, Optional
 
 import yaml
 
-from smdiff.registry import resolve_model_id
+from src.smdiff.registry import resolve_model_id
 
 
 def _deep_update(base: Dict, overrides: Dict) -> Dict:

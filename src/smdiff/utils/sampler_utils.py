@@ -2,9 +2,12 @@ import numpy as np
 import torch
 import torch.distributions as dists
 from torch.nn import DataParallel
+import os
 
 from ..models import Transformer, AbsorbingDiffusion, ConVormer, HierarchTransformer, UTransformer
 from ..registry import resolve_model_id
+from note_seq import note_sequence_to_midi_file
+from .log_utils import samples_2_noteseq
 
 
 def get_sampler(H):
@@ -48,63 +51,58 @@ def get_samples(sampler, sample_steps, x_T=None, temp=1.0, b=None, progress_hand
     return result.cpu().numpy()
 
 
-def np_to_ns(x, tokenizer_id=None):
+def save_generated_samples(samples, tokenizer_id, output_dir, prefix="sample"):
     """
-    Convert numpy array to note_seq objects.
-    
-    Args:
-        x: NumPy array of shape (batch, seq_len, tracks)
-        tokenizer_id: Optional tokenizer ID (e.g., 'melody', 'trio')
-                     If None, infers from shape
-        
-    Returns:
-        list of note_seq.NoteSequence objects
+    Converts raw tokens -> NoteSequences -> MIDI files.
+    Includes robustness fixes for Octuple and Integers.
     """
-    from ..tokenizers.registry import resolve_tokenizer_id
-    
-    # Infer tokenizer from shape if not provided
-    if tokenizer_id is None:
-        if x.shape[-1] == 1:
-            tokenizer_id = 'melody'
-            x = x.squeeze(-1)  # Remove tracks dimension for melody
-        elif x.shape[-1] == 3:
-            tokenizer_id = 'trio'
-        elif x.shape[-1] == 8:
-            tokenizer_id = 'octuple'
-        else:
-            raise ValueError(f"Cannot infer tokenizer for shape {x.shape}. Please specify tokenizer_id.")
-    
-    tokenizer_spec = resolve_tokenizer_id(tokenizer_id)
-    converter = tokenizer_spec.factory()
-    return converter.from_tensors(x)
+    # 1. Ensure Integer Type (Critical fix)
+    if isinstance(samples, torch.Tensor):
+        samples = samples.cpu().numpy()
+    samples = samples.astype(np.int64)
 
+    # 2. Shape Fix for Melody OneHot
+    if tokenizer_id == 'melody' and samples.ndim == 3 and samples.shape[-1] == 1:
+        samples = samples.squeeze(-1)
+
+    # 3. Convert to NoteSequence (using the fixed log_utils logic)
+    # This handles the Instrument=0 enforcement automatically now.
+    note_seqs = samples_2_noteseq(samples, tokenizer_id)
+
+    # 4. Save Files
+    saved_count = 0
+    for i, ns in enumerate(note_seqs):
+        if len(ns.notes) == 0:
+            continue # Skip empty/noise outputs
+        
+        filename = f"{prefix}_{i}.mid"
+        path = os.path.join(output_dir, filename)
+        try:
+            note_sequence_to_midi_file(ns, path)
+            saved_count += 1
+        except Exception as e:
+            print(f"Error saving {filename}: {e}")
+
+    print(f"Saved {saved_count} MIDI files to {output_dir}")
 
 def ns_to_np(ns, bars, tokenizer_id='melody'):
-    """
-    Convert note_seq objects to numpy arrays.
+    """Helper to convert input MIDI to tokens for Infilling."""
+    from ..preprocessing import (
+        OneHotMelodyConverter, POP909TrioConverter, 
+        POP909OctupleMelodyConverter, POP909OctupleTrioConverter
+    )
     
-    Args:
-        ns: list of note_seq.NoteSequence objects
-        bars: Number of bars to slice
-        tokenizer_id: Tokenizer ID (e.g., 'melody', 'trio')
-        
-    Returns:
-        NumPy array of tokenized sequences
-    """
-    from ..tokenizers.registry import TOKENIZER_REGISTRY
-    from ..preprocessing import OneHotMelodyConverter, POP909TrioConverter
-    
-    # Get converter with slice_bars parameter
-    # Note: OctupleEncoding doesn't use slice_bars, only the music converters do
-    if tokenizer_id == 'melody':
-        converter = OneHotMelodyConverter(slice_bars=bars)
+    if 'octuple' in tokenizer_id:
+        if 'trio' in tokenizer_id:
+            converter = POP909OctupleTrioConverter(slice_bars=bars)
+        else:
+            converter = POP909OctupleMelodyConverter(slice_bars=bars)
     elif tokenizer_id == 'trio':
         converter = POP909TrioConverter(slice_bars=bars)
-    elif tokenizer_id == 'octuple':
-        # Octuple doesn't slice by bars - it encodes full sequences
-        from ..data.octuple import OctupleEncoding
-        converter = OctupleEncoding()
     else:
-        raise ValueError(f"Unknown tokenizer_id: {tokenizer_id}")
-    
-    return converter.to_tensors(ns)
+        converter = OneHotMelodyConverter(slice_bars=bars)
+
+    tensors = converter.to_tensors(ns)
+    if tensors.outputs and len(tensors.outputs) > 0:
+        return tensors.outputs[0] # Return first slice
+    raise ValueError("Input MIDI resulted in empty tokens.")

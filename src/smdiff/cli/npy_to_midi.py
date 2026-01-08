@@ -15,8 +15,6 @@ def load_tokenizer_id(run_dir):
     """Try to infer tokenizer_id from hparams.yaml or config.yaml"""
     # Check standard locations
     paths = [
-        os.path.join(run_dir, "configs", "hparams.yaml"),
-        os.path.join(run_dir, "hparams.yaml"),
         os.path.join(run_dir, "configs", "config.yaml")
     ]
     
@@ -88,8 +86,9 @@ def main():
             # Load Samples
             samples = np.load(npy_path)
             
-            if tokenizer_id == "melody" and samples.ndim == 3 and samples.shape[-1] == 1:
-                samples = samples.squeeze(-1)
+            print("Shape: ", samples.shape)
+            
+
             
             # Convert to NoteSequences
             # samples_2_noteseq handles the shape and registry lookup
