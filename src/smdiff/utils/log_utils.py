@@ -229,12 +229,6 @@ def samples_2_noteseq(np_samples, tokenizer_id=None):
                     # Clamp to max_val (usually 'Silence'/'No Event')
                     np_samples[mask] = 0
             # --------------------------------------------------
-
-            if tokenizer_id == 'melody' and not is_octuple:
-                # Melody OneHot expects (Time, 1) but model output might be (Time,)
-                if np_samples.ndim == 2:
-                    # (Batch, Time) -> (Batch, Time, 1) for converter
-                    np_samples = np_samples[:, :, np.newaxis]
             
             return converter.from_tensors(np_samples)
             

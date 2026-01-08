@@ -88,6 +88,9 @@ def main():
             # Load Samples
             samples = np.load(npy_path)
             
+            if tokenizer_id == "melody" and samples.ndim == 3 and samples.shape[-1] == 1:
+                samples = samples.squeeze(-1)
+            
             # Convert to NoteSequences
             # samples_2_noteseq handles the shape and registry lookup
             note_seqs = samples_2_noteseq(samples, tokenizer_id)

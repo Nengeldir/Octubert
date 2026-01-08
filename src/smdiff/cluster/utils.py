@@ -113,6 +113,9 @@ def copy_final_model_to_home(scratch_run_dir, project_run_dir):
                     match = pattern.match(f)
                     if match and int(match.group(1)) == max_step:
                         should_copy = True
+                        
+                    if "best" in f:
+                        should_copy = True
                     
                     if should_copy:
                         src_f = os.path.join(src_dir, f)

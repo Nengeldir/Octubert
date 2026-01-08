@@ -73,14 +73,14 @@ def main(H):
         ema_sampler = None
 
     # --- STATE TRACKING ---
-    # Using lists for accumulation is faster than np.append
+    best_val_loss = float('inf') # Track best validation loss
     history = {
         'losses': [],
         'val_losses': [],
         'mean_losses': [],
         'elbo': [],
         'val_elbos': [],
-        'cons_var': ([], [], [], []), # Legacy structure
+        'cons_var': ([], [], [], []), 
     }
     
     start_step = 0
@@ -105,24 +105,28 @@ def main(H):
         try:
             train_stats = load_stats(H, H.load_step)
             if train_stats:
-                # Restore history
                 for k in history.keys():
                     if k in train_stats:
-                        # Convert back to list if needed
                         val = train_stats[k]
                         if isinstance(val, np.ndarray): val = val.tolist()
                         history[k] = val
-                        
+                
+                # Restore best_val_loss if it exists, otherwise calculate from history
+                if 'best_val_loss' in train_stats:
+                    best_val_loss = train_stats['best_val_loss']
+                elif len(history['val_losses']) > 0:
+                    best_val_loss = min(history['val_losses'])
+                    
                 H.steps_per_log = train_stats.get("steps_per_log", H.steps_per_log)
-                log(f"Resumed stats from step {H.load_step}")
+                log(f"Resumed stats from step {H.load_step}. Best Val Loss: {best_val_loss:.4f}")
         except Exception:
             log('No stats file found, starting fresh stats.')
 
-    # --- HELPER FUNCTIONS (Closures) ---
-    # These capture H, sampler, optim, history, etc. from the scope above
+    # --- HELPER FUNCTIONS ---
     
     def run_validation(step):
-        """Runs validation loop and logs metrics."""
+        """Runs validation loop, logs metrics, and saves BEST model."""
+        nonlocal best_val_loss # Access outer scope variable
         log(f"Evaluating step {step}")
         sampler.eval()
         
@@ -131,7 +135,7 @@ def main(H):
             with torch.no_grad():
                 stats = sampler.train_iter(x.cuda())
                 valid_loss += stats['loss'].item()
-                if H.sampler == 'absorbing':
+                if H.sampler == 'absorbing' and 'vb_loss' in stats:
                     valid_elbo += stats['vb_loss'].item()
                 num_batches += 1
         
@@ -145,10 +149,24 @@ def main(H):
         log_msg = f"Validation at step {step}: loss={valid_loss:.6f}"
         if H.sampler == 'absorbing':
             log_msg += f", elbo={valid_elbo:.6f}"
+        
+        # --- BEST MODEL LOGIC ---
+        if valid_loss < best_val_loss:
+            log_msg += " (NEW BEST!)"
+            best_val_loss = valid_loss
+            # Save "best" version specifically
+            save_model(sampler, f"{H.sampler}_best", step, H.log_dir)
+            if H.ema:
+                save_model(ema_sampler, f"{H.sampler}_ema_best", step, H.log_dir)
+        
         log(log_msg)
         
         if getattr(H, 'wandb', False):
-            val_metrics = {"val/loss": valid_loss, "val/step": step}
+            val_metrics = {
+                "val/loss": valid_loss, 
+                "val/best_loss": best_val_loss,
+                "val/step": step
+            }
             if H.sampler == 'absorbing':
                 val_metrics["val/elbo"] = valid_elbo
             wandb.log(val_metrics, step=step)
@@ -162,35 +180,41 @@ def main(H):
         samples = get_samples(
             model_to_sample,
             H.sample_steps,
-            b=H.show_samples
+            b=getattr(H, 'show_samples', 16)
         )
         save_samples(samples, step, H.log_dir)
 
     def save_checkpoint(step):
-        """Saves model, optimizer, EMA, and stats."""
+        """Saves periodic checkpoint and stats."""
         log(f"Saving checkpoint at step {step}")
         save_model(sampler, H.sampler, step, H.log_dir)
         save_model(optim, f'{H.sampler}_optim', step, H.log_dir)
         if H.ema:
             save_model(ema_sampler, f'{H.sampler}_ema', step, H.log_dir)
 
-        # Prepare stats for saving (convert lists to numpy if preferred, or keep as dict)
         stats_to_save = {k: np.array(v) for k, v in history.items()}
         stats_to_save.update({
             'steps_per_log': H.steps_per_log,
             'steps_per_eval': H.steps_per_eval,
+            'best_val_loss': best_val_loss # Persist this!
         })
         save_stats(H, stats_to_save, step)
 
-    def flush_logs(step, current_losses_buffer, step_time):
+    def flush_logs(step, current_losses_buffer, current_vb_losses_buffer, step_time):
         """Calculates mean loss from buffer and logs to console/wandb."""
         if len(current_losses_buffer) == 0: return
 
         mean_loss = np.mean(current_losses_buffer)
         history['mean_losses'].append(mean_loss)
         
-        # Log to console (reconstruct a stats dict for log_stats utils)
+        mean_vb_loss = 0.0
+        if len(current_vb_losses_buffer) > 0:
+            mean_vb_loss = np.mean(current_vb_losses_buffer)
+        
         log_data = {'mean_loss': mean_loss, 'step_time': step_time}
+        if H.sampler == 'absorbing' and len(current_vb_losses_buffer) > 0:
+            log_data['vb_loss'] = mean_vb_loss
+            
         log_stats(step, log_data)
 
         if getattr(H, 'wandb', False):
@@ -200,6 +224,9 @@ def main(H):
                 "train/lr": optim.param_groups[0]['lr'],
                 "train/step": step
             }
+            if H.sampler == 'absorbing' and len(current_vb_losses_buffer) > 0:
+                wandb_metrics["train/vb_loss"] = mean_vb_loss
+                
             wandb.log(wandb_metrics, step=step)
 
     # --- TRAINING LOOP ---
@@ -208,7 +235,8 @@ def main(H):
     log(f"Sampler params total: {sum(p.numel() for p in sampler.parameters())}")
     
     train_iterator = cycle(train_loader)
-    current_losses_buffer = [] # Buffer for steps_per_log
+    current_losses_buffer = [] 
+    current_vb_losses_buffer = []
 
     for step in range(start_step, H.train_steps):
         sampler.train()
@@ -242,18 +270,21 @@ def main(H):
         # 3. Record stats
         loss_val = stats['loss'].item()
         current_losses_buffer.append(loss_val)
-        history['losses'].append(loss_val) # Full history
+        history['losses'].append(loss_val) 
         
-        if H.sampler == 'absorbing':
-            history['elbo'].append(stats['vb_loss'].item())
+        if 'vb_loss' in stats:
+            vb_val = stats['vb_loss'].item()
+            current_vb_losses_buffer.append(vb_val)
+            history['elbo'].append(vb_val)
 
         if H.ema and step % H.steps_per_update_ema == 0 and step > 0:
             ema.update_model_average(ema_sampler, sampler)
 
         # 4. Periodic Actions
         if step % H.steps_per_log == 0:
-            flush_logs(step, current_losses_buffer, time.time() - step_start_time)
+            flush_logs(step, current_losses_buffer, current_vb_losses_buffer, time.time() - step_start_time)
             current_losses_buffer = []
+            current_vb_losses_buffer = []
 
         if step % H.steps_per_sample == 0 and step > 0:
             run_sampling(step)
@@ -267,17 +298,11 @@ def main(H):
     # --- FINAL WRAP UP ---
     log("Training loop finished. Performing final operations...")
     
-    # 1. Final Log Flush (if any steps remaining)
     if len(current_losses_buffer) > 0:
-        flush_logs(H.train_steps, current_losses_buffer, 0.0)
+        flush_logs(H.train_steps, current_losses_buffer, current_vb_losses_buffer, 0.0)
 
-    # 2. Final Validation
     run_validation(H.train_steps)
-
-    # 3. Final Sampling
     run_sampling(H.train_steps)
-
-    # 4. Final Save
     save_checkpoint(H.train_steps)
 
     if getattr(H, 'wandb', False):

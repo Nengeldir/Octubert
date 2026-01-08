@@ -15,7 +15,6 @@ schmu_tx_vae:
   codebook_size: [128]
   latent_shape: [1024,1]
 
-
 octuple_ddpm:
   model: octuple_ddpm
   internal_model: octuple_ddpm
