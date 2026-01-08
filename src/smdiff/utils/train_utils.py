@@ -70,8 +70,6 @@ def augment_note_tensor(H, batch):
             # Handle if codebook_size is a list (some configs) or int
             if isinstance(H.codebook_size, list) and len(H.codebook_size) > 0:
                 vocab_size = int(H.codebook_size[0])
-            else:
-                vocab_size = int(H.codebook_size)
         else:
             vocab_size = 128
 
