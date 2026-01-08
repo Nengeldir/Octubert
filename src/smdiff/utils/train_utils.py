@@ -63,7 +63,7 @@ def augment_note_tensor(H, batch):
             # Treat as OneHot-style: Shift all channels
             is_octuple = False
             pitch_dim = None 
-            if hasattr(H, 'codebook_size') and isinstance(H.codebook_size, list):
+            if hasattr(H, 'codebook_size') and isinstance(H.codebook_size, (list, tuple)):
                 vocab_size = int(H.codebook_size[0])
             else:
                 vocab_size = 128 # Fallback
@@ -71,7 +71,7 @@ def augment_note_tensor(H, batch):
         # --- MELODY ONEHOT (B, T) ---
         is_octuple = False
         pitch_dim = None
-        if hasattr(H, 'codebook_size') and isinstance(H.codebook_size, list):
+        if hasattr(H, 'codebook_size') and isinstance(H.codebook_size, (list, tuple)):
              vocab_size = int(H.codebook_size[0])
         else:
              vocab_size = 128
