@@ -100,20 +100,10 @@ def get_args():
 
 def _resolve_infill_mask_regions(args):
     """Return list of (start_bar, end_bar) regions to run.
-
-    If region2 is provided, generation will run *separately* for region1 and region2
-    (never masking both in one go).
     """
     region1 = (args.mask_start_bar, args.mask_end_bar)
-    has_r2 = args.mask2_start_bar is not None or args.mask2_end_bar is not None
-    if not has_r2:
-        return [region1]
-
-    if args.mask2_start_bar is None or args.mask2_end_bar is None:
-        raise ValueError("--mask2_start_bar and --mask2_end_bar must be provided together")
-
-    region2 = (args.mask2_start_bar, args.mask2_end_bar)
-    return [region1, region2]
+    # We now ignore region2 arguments completely for simplicity
+    return [region1]
 
 
 def _mask_conditioning_tokens_inplace(tokens: np.ndarray, tokenizer_id: str, mask_id: np.ndarray, start_bar: int, end_bar: int):
@@ -134,16 +124,7 @@ def _mask_conditioning_tokens_inplace(tokens: np.ndarray, tokenizer_id: str, mas
             )
 
         bar_tokens = tokens[:, :, 0]
-        # DEBUG: Print bar ranges before masking
-        print(f"[DEBUG MASK] Request: Bars {start_bar}-{end_bar}. Found bar values in sample 0: {np.unique(bar_tokens[0])}")
-        
         mask_pos = (bar_tokens >= start_bar) & (bar_tokens < end_bar)  # (B, T)
-        
-        # DEBUG: Check if we actually masked anything
-        n_masked = mask_pos.sum()
-        print(f"[DEBUG MASK] Masked {n_masked} tokens in sample 0.")
-        
-        # Broadcast mask_id (C,) onto (B, T, C)
         tokens[mask_pos] = mask_id
         return
 
@@ -236,6 +217,20 @@ def setup_infilling(args, tokenizer_id: str, mask_id: np.ndarray, seq_len: int):
 
         tokens = ns_to_np(ns, bars, tokenizer_id)
         
+        # Check if sample is valid for current mask arguments
+        # If masking requires Bar 16, verify Bar 16 exists.
+        if "octuple" in tokenizer_id:
+            # tokens is (T, C) or (1, T, C)
+            tok_check = tokens
+            if tok_check.ndim == 3: tok_check = tok_check[0]
+            if tok_check.ndim == 2 and tok_check.shape[1] > 0:
+                 # Check max bar ID
+                 max_bar_id = tok_check[:, 0].max()
+                 req_end = args.mask_end_bar
+                 if max_bar_id < req_end:
+                      print(f"Skipping {midi_path}: Max Bar {max_bar_id} < Required End {req_end}")
+                      continue
+
         if tokens.ndim == 1:
             # (T,)
             if tokens.shape[0] < seq_len:

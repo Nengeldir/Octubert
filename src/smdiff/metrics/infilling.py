@@ -91,20 +91,6 @@ def evaluate_infilling(generated_samples, original_samples, mask_start_step, mas
             p_acc = _pitch_accuracy(g_trunc, o_trunc, pitch_idx=pitch_idx)
             pitch_accs.append(p_acc)
             
-            # DEBUG: Print first sample mismatch details if accuracy is 0 but we have content
-            if len(pitch_accs) == 1:
-                print(f"[DEBUG INFILL] Sample 0 comparison:")
-                print(f"  Gen len: {len(gen)}, Orig len: {len(orig)}, Min len: {min_len}")
-                if min_len > 0:
-                     gp = g_trunc[:, pitch_idx]
-                     op = o_trunc[:, pitch_idx]
-                     match_count = (gp == op).sum()
-                     print(f"  Pitch Acc: {p_acc:.2f}% ({match_count}/{min_len})")
-                     print(f"  Gen Pitches (first 10): {gp[:10]}")
-                     print(f"  Orig Pitches (first 10): {op[:10]}")
-                     print(f"  Gen Bar IDs (first 10): {g_trunc[:10, 0]}")
-                     print(f"  Orig Bar IDs (first 10): {o_trunc[:10, 0]}")
-
             if duration_idx is not None:
                 duration_accs.append(_duration_accuracy(g_trunc, o_trunc, duration_idx=duration_idx))
             else:

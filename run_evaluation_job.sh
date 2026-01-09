@@ -36,10 +36,10 @@ N_MIDIS=2
 SAMPLES_PER_MIDI=1
 
 # Two separate infill regions (NOT simultaneous): total infill samples = N_MIDIS * 2 * SAMPLES_PER_MIDI
+# NO: We simplified to single region masking.
 MASK1_START_BAR=4
 MASK1_END_BAR=8
-MASK2_START_BAR=16
-MASK2_END_BAR=20
+# Region 2 args removed/ignored
 
 INFILL_MIDI_DIR="data/test/POP909"  # recursively searched; excludes any 'versions/' subfolders
 
@@ -83,8 +83,8 @@ echo "Unconditional evaluation complete!"
 echo ""
 echo "Running infilling evaluation (generating conditioned samples)..."
 
-# This uses --input_midi_dir and runs each MIDI twice (region1 then region2),
-# producing N_MIDIS * 2 * SAMPLES_PER_MIDI samples.
+# This uses --input_midi_dir and runs each MIDI once (region1 only),
+# producing N_MIDIS * 1 * SAMPLES_PER_MIDI samples.
 python -m smdiff.cli.evaluate \
     --task infill \
     --model $MODEL_ID \
@@ -95,11 +95,10 @@ python -m smdiff.cli.evaluate \
     --samples_per_midi $SAMPLES_PER_MIDI \
     --mask_start_bar $MASK1_START_BAR \
     --mask_end_bar $MASK1_END_BAR \
-    --mask2_start_bar $MASK2_START_BAR \
-    --mask2_end_bar $MASK2_END_BAR \
-    --n_samples $((N_MIDIS * 2 * SAMPLES_PER_MIDI)) \
+    --n_samples $((N_MIDIS * SAMPLES_PER_MIDI)) \
     --output_dir $RUN_DIR/metrics \
-    --device cuda
+    --device cuda \
+    --save_samples
 
 echo "Infilling evaluation complete!"
 
