@@ -154,6 +154,8 @@ def main():
         sys.argv = prev_argv
         
     run_id = f"{ns.model}_{tokenizer_id}"
+    if masking_strategy:
+        run_id += f"_{masking_strategy}"
         
     project_run_dir = os.path.join("runs", run_id)
     H.project_log_dir = os.path.abspath(project_run_dir)
