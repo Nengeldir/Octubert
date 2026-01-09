@@ -157,12 +157,15 @@ def main(H):
             best_val_loss = valid_loss
             # Save "best" version specifically
             # 1. Save Main Model (Overwrite)
-            best_path = os.path.join(H.log_dir, "checkpoints", f"best.pt")
+            ckpt_dir = os.path.join(H.log_dir, "checkpoints")
+            os.makedirs(ckpt_dir, exist_ok=True)
+
+            best_path = os.path.join(ckpt_dir, "best.pt")
             torch.save(sampler.state_dict(), best_path)
             
             # 2. Save EMA Model (Overwrite)
             if H.ema:
-                ema_best_path = os.path.join(H.log_dir, "checkpoints", f"ema_best.pt")
+                ema_best_path = os.path.join(ckpt_dir, "ema_best.pt")
                 torch.save(ema_sampler.state_dict(), ema_best_path)
             
             # 3. Save Info File (So we know WHICH step was best)
