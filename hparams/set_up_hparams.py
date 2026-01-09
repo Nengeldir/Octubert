@@ -70,7 +70,7 @@ def get_sampler_hparams(mode):
         H = HparamsHierarchTransformer(parser_args)
     elif parser_args.model == 'U_transformer':
         H = HparamsUTransformer(parser_args)
-    elif parser_args.model.startswith('octuple'):
+    elif parser_args.model.startswith('octuple') or parser_args.model.startswith('musicbert'):
         H = HparamsOctuple(parser_args)
     else:
         parser_args.model = 'conv_transformer'

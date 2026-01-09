@@ -3,43 +3,26 @@
 schmu_conv_vae:
   model: schmu_conv_vae
   internal_model: conv_transformer
-  bert_n_emb: 512
-  conv_layers: 1
-  conv_len: 4
-  codebook_size: [128, 128, 128]
-  latent_shape: [1024,3]
+  dataset_id: pop909_trio
 
 schmu_tx_vae:
   model: schmu_tx_vae
   internal_model: transformer
-  codebook_size: [128]
-  latent_shape: [1024,1]
+  dataset_id: pop909_trio
 
 octuple_ddpm:
   model: octuple_ddpm
   internal_model: octuple_ddpm
-  tracks: trio_octuple
-  bars: 64
-  NOTES: 1024
-  codebook_size: [2048, 128, 129, 256, 128, 32, 256, 49]
-  latent_shape: [1024, 8]
-  augment: true
-  dataset_path: "data/POP909_trio_octuple.npy"
+  dataset_id: pop909_trio_octuple
 
 octuple_mask_ddpm:
   model: octuple_mask_ddpm
   internal_model: octuple_mask_ddpm
-  tracks: trio_octuple
-  bars: 64
-  NOTES: 1024
-  codebook_size: [2048, 128, 129, 256, 128, 32, 256, 49]
-  latent_shape: [1024, 8]
-  augment: false
-  dataset_path: "data/POP909_trio_octuple.npy"
+  dataset_id: pop909_trio_octuple
 
 musicbert_ddpm:
   model: musicbert_ddpm
   internal_model: musicbert_ddpm
-  tracks: trio_octuple
-  available: false
-  notes: Model not implemented in this fork yet.
+  dataset_id: pop909_trio_octuple
+  
+

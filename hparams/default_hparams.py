@@ -98,5 +98,5 @@ class HparamsOctuple(HparamsAbsorbing):
         
         self.codebook_size = (2048, 128, 129, 256, 128, 32, 256, 49)
         self.latent_shape = (self.NOTES, 8)
-        self.augment = False # Disable augmentation for Octuple initially
+        # self.augment = False # Disable augmentation for Octuple initially
 
