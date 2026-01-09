@@ -27,8 +27,8 @@ python -c "import torch; print('Torch:', torch.__version__, 'CUDA:', torch.cuda.
 
 # Configuration
 MODEL_ID="octuple_ddpm"
-RUN_DIR="runs/octuple_ddpm_trio_octuple"  # Update to your actual run directory
-DATASET_ID="pop909_trio_octuple"
+RUN_DIR="runs/schmu_tx_vae_trio"  # Update to your actual run directory
+DATASET_ID="pop909_trio"
 
 # Mini smoke-test sizes (fast). Increase once the job works end-to-end.
 N_SAMPLES_UNCOND=8
