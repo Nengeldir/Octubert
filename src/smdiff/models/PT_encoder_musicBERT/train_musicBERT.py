@@ -18,9 +18,12 @@ import torch.nn.functional as F
 from torch.optim import Adam
 
 # Add src to path
-sys.path.append(os.path.abspath('..'))
+current_dir = os.path.dirname(os.path.abspath(__file__))
+src_path = os.path.abspath(os.path.join(current_dir, '../../../'))
+if src_path not in sys.path:
+    sys.path.append(src_path)
 
-from ...models.musicbert import MusicBERT, MusicBERTConfig
+from smdiff.models.musicbert import MusicBERT, MusicBERTConfig
 from smdiff.data.musicbert import MusicBERTDataset
 
 # %%
@@ -35,7 +38,8 @@ MAX_SEQ_LEN = 1024
 VOCAB_SIZES = [258, 53, 260, 132, 133, 132, 132, 36]
 
 # Use absolute path to ensure data is found on the server
-DATA_PATH = '../data/processed/'
+# user requested specifically to run with trio_octuple data
+DATA_PATH = os.path.abspath(os.path.join(current_dir, '../../../../data/POP909_trio_octuple.npy'))
 
 # Create Dataset
 # Ensure the data path exists and has .npy files
