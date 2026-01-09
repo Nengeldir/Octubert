@@ -33,6 +33,11 @@ MAX_SEQ_LEN = 1024
 # Optimized vocab sizes for OctupleMIDI (TimeSig, Tempo, Bar, Pos, Instr, Pitch, Dur, Vel)
 # +4 for special tokens (PAD, MASK, CLS, EOS)
 VOCAB_SIZES = [258, 53, 260, 132, 133, 132, 132, 36]
+# VOCAB_SIZES = [260, 132, 133, 132, 132, 36, 258, 53]
+# VOCAB_SIZES = [260, 132, 7, 132, 132, 36, 258, 53]
+# VOCAB_SIZES = [256, 128, 3, 128, 128, 32, 254, 49]
+
+
 
 # Use absolute path to ensure data is found on the server
 DATA_PATH = '../data/processed/'
