@@ -70,14 +70,13 @@ def evaluate_infilling(generated_samples, original_samples, mask_start_step, mas
     token_accs = []
     
     for gen, orig in zip(gen_masked, orig_masked):
-        # Handle empty regions (if no notes in masked bars)
-        if len(gen) == 0 and len(orig) == 0:
-            # Perfect match if both empty
-            pitch_accs.append(100.0)
-            duration_accs.append(100.0)
-            token_accs.append(100.0)
-        elif len(gen) == 0 or len(orig) == 0:
-            # Mismatch if one is empty
+        # SKIP if original region is empty (no ground truth to compare against)
+        # This prevents "100% accuracy" when both are empty due to the song ending.
+        if len(orig) == 0:
+            continue
+
+        # Handle empty generation but non-empty original
+        if len(gen) == 0:
             pitch_accs.append(0.0)
             duration_accs.append(0.0)
             token_accs.append(0.0)
@@ -93,15 +92,29 @@ def evaluate_infilling(generated_samples, original_samples, mask_start_step, mas
             if duration_idx is not None:
                 duration_accs.append(_duration_accuracy(g_trunc, o_trunc, duration_idx=duration_idx))
             else:
-                duration_accs.append(0.0)
+                duration_accs.append(0.0) # Not applicable
             token_accs.append(_token_accuracy(g_trunc, o_trunc))
     
-    metrics['pitch_accuracy'] = np.mean(pitch_accs)
-    metrics['pitch_accuracy_std'] = np.std(pitch_accs)
-    metrics['duration_accuracy'] = np.mean(duration_accs) if duration_accs else 0.0
-    metrics['duration_accuracy_std'] = np.std(duration_accs) if duration_accs else 0.0
-    metrics['token_accuracy'] = np.mean(token_accs)
-    metrics['token_accuracy_std'] = np.std(token_accs)
+    if pitch_accs:
+        metrics['pitch_accuracy'] = np.mean(pitch_accs)
+        metrics['pitch_accuracy_std'] = np.std(pitch_accs)
+    else:
+        metrics['pitch_accuracy'] = 0.0
+        metrics['pitch_accuracy_std'] = 0.0
+
+    if duration_accs:
+        metrics['duration_accuracy'] = np.mean(duration_accs)
+        metrics['duration_accuracy_std'] = np.std(duration_accs)
+    else:
+        metrics['duration_accuracy'] = 0.0
+        metrics['duration_accuracy_std'] = 0.0
+
+    if token_accs:
+        metrics['token_accuracy'] = np.mean(token_accs)
+        metrics['token_accuracy_std'] = np.std(token_accs)
+    else:
+        metrics['token_accuracy'] = 0.0
+        metrics['token_accuracy_std'] = 0.0
     
     # Musical quality in masked region
     # For Octuple, histograms handle variable length arrays fine

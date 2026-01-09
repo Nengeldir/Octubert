@@ -46,8 +46,9 @@ def evaluate_unconditional(generated_samples, train_samples, is_octuple=False):
     metrics['pch_kl'] = kl_divergence(train_pch, gen_pch)
     
     if duration_idx is not None:
-        gen_dur = duration_histogram(generated_samples, duration_idx=duration_idx)
-        train_dur = duration_histogram(train_samples, duration_idx=duration_idx)
+        # Increase max_bins for Octuple (which has typically >32 duration tokens)
+        gen_dur = duration_histogram(generated_samples, duration_idx=duration_idx, max_bins=128)
+        train_dur = duration_histogram(train_samples, duration_idx=duration_idx, max_bins=128)
         metrics['duration_kl'] = kl_divergence(train_dur, gen_dur)
     else:
         metrics['duration_kl'] = 0.0

@@ -1,0 +1,52 @@
+import numpy as np
+import sys
+import os
+
+# Add src to path
+sys.path.append(os.getcwd())
+
+from src.smdiff.metrics.common import duration_histogram, velocity_histogram
+
+try:
+    path = "data/POP909_melody_octuple.npy"
+    data = np.load(path, allow_pickle=True)
+    
+    print(f"Loaded {path}, shape {data.shape}")
+    
+    # Take first 100 samples
+    samples = data[:100]
+    
+    # Inspect Sample 0
+    s0 = samples[0]
+    print(f"Sample 0 shape: {s0.shape}")
+    print("Sample 0 first 5 rows:")
+    print(s0[:5])
+    
+    # Check Pitch(3), Duration(4), Velocity(5) stats
+    # Handle object array if necessary
+    all_s = []
+    for s in samples:
+        if isinstance(s, np.ndarray):
+            all_s.append(s)
+            
+    pitches = np.concatenate([s[:, 3] for s in all_s])
+    durations = np.concatenate([s[:, 4] for s in all_s])
+    velocities = np.concatenate([s[:, 5] for s in all_s])
+    
+    print("\n--- STATISTICS (First 100 samples) ---")
+    print(f"Pitch (idx 3): min={pitches.min()}, max={pitches.max()}, mean={pitches.mean():.2f}")
+    print(f"Duration (idx 4): min={durations.min()}, max={durations.max()}, mean={durations.mean():.2f}")
+    print(f"Velocity (idx 5): min={velocities.min()}, max={velocities.max()}, mean={velocities.mean():.2f}")
+    
+    print(f"Unique Durations: {np.unique(durations)}")
+    print(f"Unique Velocities: {np.unique(velocities)}")
+    
+    # Check histograms
+    d_hist = duration_histogram(all_s, duration_idx=4)
+    v_hist = velocity_histogram(all_s, velocity_idx=5)
+    
+    print(f"\nDuration Hist: {d_hist}")
+    print(f"Velocity Hist: {v_hist}")
+    
+except Exception as e:
+    print(f"Error: {e}")

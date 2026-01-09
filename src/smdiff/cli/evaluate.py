@@ -215,43 +215,17 @@ def setup_infilling(args, tokenizer_id: str, mask_id: np.ndarray, seq_len: int):
     conditioning_list = []
     originals_list = []
     region_index: list[int] = []
+    source_ids: list[str] = []
 
     for midi_path in midi_files:
         print(f"Conditioning on MIDI: {midi_path}")
+        # Get filename stem for ID
+        fname = os.path.basename(midi_path)
+        stem, _ = os.path.splitext(fname)
+
         with open(midi_path, "rb") as f:
             ns = midi_to_note_sequence(f.read())
 
-        tokens = ns_to_np(ns, bars, tokenizer_id)
-        if tokens.ndim == 2:
-            tokens = tokens[np.newaxis, :]  # (1, T, C) or (1, T)
-        
-        # Pad or Crop to seq_len (H.NOTES)
-        # tokens is typically (1, varies, C) or (varies, C) -> we ensured (1, T, C) above if ndim=2?
-        # Actually ns_to_np returns (T, C) or (T,).
-        # If ndim==2, it means (T, C). Then we add batch dim: (1, T, C).
-        # But wait, logic below assumes (1, T, C) if ndim was 2.
-        # If ndim was 1 (T,), tokens is (T,). We didn't unsqueeze? 
-        # Original code: if tokens.ndim == 2: tokens = tokens[np.newaxis, :]
-        # This seems to assume (T, C) -> (1, T, C). And (T,) stays (T,).
-        
-        # Fix shape handling for padding
-        if tokens.ndim == 1:
-             # (T,)
-             curr_len = tokens.shape[0]
-             if curr_len < seq_len:
-                 padding = np.zeros((seq_len - curr_len,), dtype=tokens.dtype)
-                 tokens = np.concatenate([tokens, padding], axis=0)
-             elif curr_len > seq_len:
-                 tokens = tokens[:seq_len]
-        else:
-             # (B, T, C) or (T, C)?
-             # ns_to_np returns (T, C).
-             # Previous code: if tokens.ndim == 2: tokens = tokens[np.newaxis, :]. Now (1, T, C).
-             # So we are dealing with (1, T, C) or (T, C).
-             # Let's standardize on (T, C) or (T,) before adding batch dim.
-             pass
-
-        # Re-implement shape standardization to be safe
         tokens = ns_to_np(ns, bars, tokenizer_id)
         
         if tokens.ndim == 1:
@@ -283,6 +257,7 @@ def setup_infilling(args, tokenizer_id: str, mask_id: np.ndarray, seq_len: int):
             conditioning_list.append(masked_rep)
             originals_list.append(orig_rep)
             region_index.extend([region_i] * masked_rep.shape[0])
+            source_ids.extend([stem] * masked_rep.shape[0])
 
     conditioning = np.concatenate(conditioning_list, axis=0) if conditioning_list else np.empty((0,))
     originals = np.concatenate(originals_list, axis=0) if originals_list else np.empty((0,))
@@ -300,8 +275,9 @@ def setup_infilling(args, tokenizer_id: str, mask_id: np.ndarray, seq_len: int):
         conditioning = conditioning[: args.n_samples]
         originals = originals[: args.n_samples]
         region_index = region_index[: args.n_samples]
+        source_ids = source_ids[: args.n_samples]
 
-    return conditioning, originals, region_index
+    return conditioning, originals, region_index, source_ids
 
 
 def generate_samples(args, H, tokenizer_id, device, task):
@@ -347,12 +323,14 @@ def generate_samples(args, H, tokenizer_id, device, task):
     conditioning = None
     original_tokens = None
     region_index = None
+    source_ids = None
+
     if task == "infill":
         # Use the sampler's mask_id token(s) to mark unknown region.
         mask_id_np = sampler.mask_id.detach().cpu().numpy()
         # Ensure we pad/crop to the model's sequence length (H.NOTES)
         seq_len = getattr(H, 'NOTES', 1024)
-        conditioning_np, original_tokens, region_index = setup_infilling(args, tokenizer_id, mask_id_np, seq_len)
+        conditioning_np, original_tokens, region_index, source_ids = setup_infilling(args, tokenizer_id, mask_id_np, seq_len)
         args.n_samples = conditioning_np.shape[0]
         conditioning = torch.from_numpy(conditioning_np).long().to(device)
 
@@ -384,8 +362,9 @@ def generate_samples(args, H, tokenizer_id, device, task):
     samples = [final_samples[i] for i in range(len(final_samples))]
     originals = [original_tokens[i] for i in range(len(final_samples))] if original_tokens is not None else None
     region_index_out = region_index[: len(final_samples)] if region_index is not None else None
+    source_ids_out = source_ids[: len(final_samples)] if source_ids is not None else None
 
-    return samples, originals, region_index_out
+    return samples, originals, region_index_out, source_ids_out
 
 
 def load_training_data(dataset_id, n_samples=1000):
@@ -549,18 +528,47 @@ def main():
         if args.sample_steps > 0:
             H.sample_steps = args.sample_steps
         
-        generated_samples, generated_originals, generated_region_index = generate_samples(
+        generated_samples, generated_originals, generated_region_index, generated_source_ids = generate_samples(
             args, H, tokenizer_id, args.device, args.task
         )
         
         # Save samples if requested
         if args.save_samples:
-            sample_out_dir = os.path.join(args.output_dir, "samples")
+            subfolder = "uncond" if args.task == "uncond" else "infill"
+            sample_out_dir = os.path.join(args.output_dir, "samples", subfolder)
             os.makedirs(sample_out_dir, exist_ok=True)
-            from smdiff.utils.sampler_utils import save_generated_samples
-            gen_array = np.array(generated_samples)
-            save_generated_samples(gen_array, tokenizer_id, sample_out_dir, prefix="eval")
-            print(f"Saved samples to {sample_out_dir}")
+            
+            from smdiff.utils.log_utils import samples_2_noteseq
+            
+            # Save generated samples one by one with proper naming
+            for i, sample_arr in enumerate(generated_samples):
+                # Convert (T, C) -> (1, T, C) batch for conversion
+                # Use a specific batch dimension to ensure samples_2_noteseq works
+                if sample_arr.ndim == 1:
+                    batch = sample_arr[np.newaxis, :]
+                else:
+                    batch = sample_arr[np.newaxis, :, :]
+                    
+                ns_list = samples_2_noteseq(batch, tokenizer_id)
+                if not ns_list:
+                    print(f"Warning: Failed to convert sample {i}")
+                    continue
+                ns = ns_list[0]
+                
+                if args.task == "uncond":
+                    filename = f"uncond_{i}.mid"
+                else:
+                    # Infill naming: infill_{source_id}_{i}.mid
+                    src_id = generated_source_ids[i] if generated_source_ids else f"unknown_{i}"
+                    filename = f"infill_{src_id}_{i}.mid"
+                
+                out_path = os.path.join(sample_out_dir, filename)
+                midi_to_note_sequence(ns) # Ensure it's valid? No, it's already an NS.
+                # Use note_seq to write
+                from note_seq import note_sequence_to_midi_file
+                note_sequence_to_midi_file(ns, out_path)
+            
+            print(f"Saved {len(generated_samples)} samples to {sample_out_dir}")
     
     # Load training data for distribution comparison
     train_samples = load_training_data(args.dataset_id, n_samples=1000)
@@ -572,7 +580,8 @@ def main():
         metrics = evaluate_task(
             "uncond",
             generated_samples,
-            train_samples=train_samples
+            train_samples=train_samples,
+            is_octuple=("octuple" in tokenizer_id)
         )
     
     elif args.task == "infill":
