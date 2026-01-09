@@ -10,7 +10,7 @@ from .sampler import Sampler
 class AbsorbingDiffusion(Sampler):
     def __init__(self, H, denoise_fn, mask_id):
         super().__init__(H)
-
+        self.seed = H.seed
         self.num_classes = H.codebook_size
         self.latent_emb_dim = H.emb_dim
         self.shape = tuple(H.latent_shape)
@@ -33,6 +33,9 @@ class AbsorbingDiffusion(Sampler):
         assert self.mask_schedule in ['random', 'fixed']
 
         self.task_queue = []
+
+        # Set seed
+        torch.manual_seed(self.seed)
 
     def sample_time(self, b, device, method='uniform'):
         if method == 'importance':
@@ -125,10 +128,8 @@ class AbsorbingDiffusion(Sampler):
             # Randomly select a strategy from the pool
             # Pool includes the 5 partial strategies AND 'random' (standard full masking)
             strategies = [
-                '1_bar_all', 
-                '2_bar_all', 
-                '1_bar_attribute', 
-                '2_bar_attribute', 
+                'bar_all',
+                'bar_attribute', 
                 'rand_attribute',
                 'random'
             ]
@@ -141,108 +142,92 @@ class AbsorbingDiffusion(Sampler):
         if current_strategy == 'random':
             return self.q_sample(x_0=x_0, t=t)
 
-        if current_strategy == '1_bar_all':
-            # Mask Pitch, Duration, Velocity, Tempo over 1 bar
-            # Randomly select a bar for each sample
-            # Bar info is in index 0
+        candidate_mask = None
+        
+        if current_strategy == 'bar_all':
+            # Time-Dependent Bar Count
+            # Select K bars where K ~ t/T * TotalBars
+            # Mask ALL attributes for those bars.
             
-            # 1. Identify valid bars for each sample (assuming bars are sequential/present)
-            # Simplification: Assume max bar from data or iterate. 
-            # Since x_0 is a batch, we need to handle per-sample logic or vectorize.
-            # Vectorized approach:
-            
-            # Find unique bars per sample is expensive. 
-            # Let's assume standard Octuple structure where [:, :, 0] are bar indices.
             bar_indices = x_0[:, :, 0]
+            
+            for i in range(b):
+                u_bars = torch.unique(bar_indices[i])
+                n_bars = len(u_bars)
+                
+                # t[i] is 1..T
+                ratio = t[i].float() / self.num_timesteps
+                k = torch.round(n_bars * ratio).long().item()
+                
+                if k > 0:
+                    perm = torch.randperm(n_bars, device=device)
+                    selected_bars = u_bars[perm[:k]]
+                    
+                    # mask[i] = (bar_indices[i] in selected_bars)
+                    sample_mask = torch.isin(bar_indices[i], selected_bars)
+                    mask[i, :, :] = sample_mask.unsqueeze(-1).expand(-1, 8)
+            
+            # Apply per-channel mask token
+            for i in range(len(self.mask_id)):
+                x_t[:, :, i][mask[:, :, i]] = self.mask_id[i]
+            
+            x_0_ignore[torch.bitwise_not(mask)] = -1
+            return x_t, x_0_ignore, mask
 
-            # Select an existing bar per sample by picking a random position in the sequence
-            rand_pos = torch.randint(0, seq_len, (b,), device=device)
-            target_bars = bar_indices[torch.arange(b, device=device), rand_pos]
+        if current_strategy == 'bar_attribute':
+            # Strategy 3: Time-Dependent Bar-Attribute Units
+            # Select K (Bar, Attribute) pairs where K ~ t/T * TotalUnits
+            # Mask specific attributes in specific bars.
             
-            # Expand for broadcasting
-            target_bars_exp = target_bars.unsqueeze(1).expand(-1, seq_len) # (Batch, SeqLen)
-            
-            # Construct candidate mask: match bar and attributes
-            # Attributes to mask: Pitch(3), Duration(4), Velocity(5), Tempo(7)
+            bar_indices = x_0[:, :, 0]
+            # Attributes: Pitch(3), Duration(4), Velocity(5), Tempo(7)
             target_attributes = torch.tensor([3, 4, 5, 7], device=device)
+            num_attrs = len(target_attributes)
             
-            # Create attribute mask
-            attr_mask = torch.zeros(8, dtype=torch.bool, device=device)
-            attr_mask[target_attributes] = True
-            attr_mask = attr_mask.unsqueeze(0).unsqueeze(0).expand(b, seq_len, -1) # (Batch, SeqLen, 8)
-            
-            # Combine: (Bar match) AND (Attribute match)
-            candidate_mask = (bar_indices == target_bars_exp).unsqueeze(-1) & attr_mask
+            for i in range(b):
+                u_bars = torch.unique(bar_indices[i])
+                n_bars = len(u_bars)
+                total_units = n_bars * num_attrs
+                
+                # t[i] is 1..T
+                ratio = t[i].float() / self.num_timesteps
+                k = torch.round(total_units * ratio).long().item()
+                
+                if k > 0:
+                     # Sample k units from total_units
+                     perm = torch.randperm(total_units, device=device)[:k]
+                     
+                     # Map back to (bar_index_idx, attr_index_idx)
+                     sel_bar_indices = perm // num_attrs
+                     sel_attr_indices = perm % num_attrs
+                     
+                     # For each selected bar, gather which attributes to mask
+                     # To avoid loop over k, loop over unique bars present in selection
+                     unique_sel_bar_indices = torch.unique(sel_bar_indices)
+                     
+                     for bar_idx_idx in unique_sel_bar_indices:
+                         # Get actual bar value
+                         bar_val = u_bars[bar_idx_idx]
+                         
+                         # Which attributes for this bar?
+                         # Indices in 'perm' where bar is this one
+                         current_bar_match = (sel_bar_indices == bar_idx_idx)
+                         attrs_to_mask_indices = sel_attr_indices[current_bar_match]
+                         actual_attrs = target_attributes[attrs_to_mask_indices]
+                         
+                         # Apply to mask
+                         # Find positions of this bar
+                         pos_mask = (bar_indices[i] == bar_val) # (SeqLen,)
+                         
+                         for att in actual_attrs:
+                             mask[i, pos_mask, att] = True
 
-        elif current_strategy == '2_bar_all':
-            # Mask Pitch, Duration, Velocity, Tempo over 2 bars
-            bar_indices = x_0[:, :, 0]
-
-            # Pick two (possibly identical) existing bars per sample
-            rand_pos1 = torch.randint(0, seq_len, (b,), device=device)
-            rand_pos2 = torch.randint(0, seq_len, (b,), device=device)
-            r1 = bar_indices[torch.arange(b, device=device), rand_pos1]
-            r2 = bar_indices[torch.arange(b, device=device), rand_pos2]
+            # Apply per-channel mask token
+            for i in range(len(self.mask_id)):
+                x_t[:, :, i][mask[:, :, i]] = self.mask_id[i]
             
-            target_bars1 = r1.unsqueeze(1).expand(-1, seq_len)
-            target_bars2 = r2.unsqueeze(1).expand(-1, seq_len)
-            
-            target_attributes = torch.tensor([3, 4, 5, 7], device=device)
-            attr_mask = torch.zeros(8, dtype=torch.bool, device=device)
-            attr_mask[target_attributes] = True
-            attr_mask = attr_mask.unsqueeze(0).unsqueeze(0).expand(b, seq_len, -1)
-            
-            bar_match = (bar_indices == target_bars1) | (bar_indices == target_bars2)
-            candidate_mask = bar_match.unsqueeze(-1) & attr_mask
-
-        elif current_strategy == '1_bar_attribute':
-            # Randomly pick ONE of {Pitch, Dur, Vel, Tempo} and mask it for 1 random bar
-            # Per sample defined strategy
-            
-            bar_indices = x_0[:, :, 0]
-
-            rand_pos = torch.randint(0, seq_len, (b,), device=device)
-            target_bars = bar_indices[torch.arange(b, device=device), rand_pos]
-            target_bars_exp = target_bars.unsqueeze(1).expand(-1, seq_len)
-            
-            # Available attributes: 3, 4, 5, 7
-            avail_attrs = torch.tensor([3, 4, 5, 7], device=device)
-            # Pick one index per sample from 0..3
-            rand_indices = (torch.rand(b, device=device) * 4).long()
-            selected_attrs = avail_attrs[rand_indices] # (Batch,)
-            
-            selected_attrs_exp = selected_attrs.unsqueeze(1).expand(-1, seq_len).unsqueeze(-1) # (Batch, SeqLen, 1)
-            # Create full index tensor for last dim to compare
-            feature_indices = torch.arange(8, device=device).unsqueeze(0).unsqueeze(0).expand(b, seq_len, 8)
-            
-            attr_mask = (feature_indices == selected_attrs_exp)
-            
-            candidate_mask = (bar_indices == target_bars_exp).unsqueeze(-1) & attr_mask
-
-        elif current_strategy == '2_bar_attribute':
-            # Randomly pick ONE of {Pitch, Dur, Vel, Tempo} and mask it for 2 random bars
-            
-            bar_indices = x_0[:, :, 0]
-
-            rand_pos1 = torch.randint(0, seq_len, (b,), device=device)
-            rand_pos2 = torch.randint(0, seq_len, (b,), device=device)
-            r1 = bar_indices[torch.arange(b, device=device), rand_pos1]
-            r2 = bar_indices[torch.arange(b, device=device), rand_pos2]
-            
-            target_bars1 = r1.unsqueeze(1).expand(-1, seq_len)
-            target_bars2 = r2.unsqueeze(1).expand(-1, seq_len)
-            
-            avail_attrs = torch.tensor([3, 4, 5, 7], device=device)
-            rand_indices = (torch.rand(b, device=device) * 4).long()
-            selected_attrs = avail_attrs[rand_indices]
-            
-            selected_attrs_exp = selected_attrs.unsqueeze(1).expand(-1, seq_len).unsqueeze(-1)
-            feature_indices = torch.arange(8, device=device).unsqueeze(0).unsqueeze(0).expand(b, seq_len, 8)
-            
-            attr_mask = (feature_indices == selected_attrs_exp)
-            bar_match = (bar_indices == target_bars1) | (bar_indices == target_bars2)
-            
-            candidate_mask = bar_match.unsqueeze(-1) & attr_mask
+            x_0_ignore[torch.bitwise_not(mask)] = -1
+            return x_t, x_0_ignore, mask
 
         elif current_strategy == 'rand_attribute':
              # Randomly pick ONE of {Pitch, Dur, Vel, Tempo} and mask it randomly across the sequence

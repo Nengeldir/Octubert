@@ -26,6 +26,7 @@ python3 src/smdiff/cli/train.py \
   --steps_per_eval 1000 \
   --steps_per_sample 10000 \
   --steps_per_checkpoint 5000 \
+  --seed 67 \
   --wandb \
   --wandb_project "octubert-music" \
   --wandb_name "octuple-mask-ddpm-trio-octuple"
