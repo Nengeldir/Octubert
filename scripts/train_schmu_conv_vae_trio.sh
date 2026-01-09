@@ -23,7 +23,7 @@ python3 src/smdiff/cli/train.py \
   --epochs 100 \
   --steps_per_log 10 \
   --steps_per_eval 1000 \
-  --steps_per_sample 10000 \
+  --steps_per_sample 5000 \
   --steps_per_checkpoint 5000 \
   --seed 67 \
   --wandb \
