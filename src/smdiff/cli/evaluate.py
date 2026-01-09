@@ -563,7 +563,6 @@ def main():
                     filename = f"infill_{src_id}_{i}.mid"
                 
                 out_path = os.path.join(sample_out_dir, filename)
-                midi_to_note_sequence(ns) # Ensure it's valid? No, it's already an NS.
                 # Use note_seq to write
                 from note_seq import note_sequence_to_midi_file
                 note_sequence_to_midi_file(ns, out_path)
