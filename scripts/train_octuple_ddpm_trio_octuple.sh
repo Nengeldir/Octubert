@@ -20,7 +20,7 @@ python3 src/smdiff/cli/train.py \
   --model octuple_ddpm \
   --dataset_id pop909_trio_octuple \
   --batch_size 4 \
-  --epochs 100 \ 
+  --epochs 100 \
   --steps_per_log 10 \
   --steps_per_eval 1000 \
   --steps_per_sample 5000 \
