@@ -44,10 +44,7 @@ pip install -r requirements.txt
 ```bash
 # 1. Prepare data (POP909 dataset)
 python -m smdiff.cli.prepare_data \
-    --root_dir data/POP909 \
     --tokenizer_id trio_octuple \
-    --bars 64 \
-    --cache_path data/POP909_trio_octuple.npy
 
 # 2. Train model
 python train.py \

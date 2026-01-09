@@ -61,10 +61,28 @@ def get_args():
     # Infilling Config
     parser.add_argument("--mask_start_bar", type=int, default=16)
     parser.add_argument("--mask_end_bar", type=int, default=32)
+    parser.add_argument(
+        "--mask2_start_bar",
+        type=int,
+        default=None,
+        help="Optional second mask region start bar. If set (with --mask2_end_bar), evaluation runs each MIDI twice: once with region1 and once with region2.",
+    )
+    parser.add_argument(
+        "--mask2_end_bar",
+        type=int,
+        default=None,
+        help="Optional second mask region end bar (exclusive).",
+    )
     parser.add_argument("--input_midi", type=str, default=None,
                         help="MIDI file for infill task (single file)")
     parser.add_argument("--input_midi_dir", type=str, default=None,
                         help="Directory of MIDI files for infill task (multiple conditionings)")
+    parser.add_argument(
+        "--n_midis",
+        type=int,
+        default=None,
+        help="If using --input_midi_dir, limit to the first N MIDI files (sorted).",
+    )
     parser.add_argument("--samples_per_midi", type=int, default=1,
                         help="How many samples to generate per conditioning MIDI")
     
@@ -80,15 +98,85 @@ def get_args():
     return parser.parse_args()
 
 
+def _resolve_infill_mask_regions(args):
+    """Return list of (start_bar, end_bar) regions to run.
+
+    If region2 is provided, generation will run *separately* for region1 and region2
+    (never masking both in one go).
+    """
+    region1 = (args.mask_start_bar, args.mask_end_bar)
+    has_r2 = args.mask2_start_bar is not None or args.mask2_end_bar is not None
+    if not has_r2:
+        return [region1]
+
+    if args.mask2_start_bar is None or args.mask2_end_bar is None:
+        raise ValueError("--mask2_start_bar and --mask2_end_bar must be provided together")
+
+    region2 = (args.mask2_start_bar, args.mask2_end_bar)
+    return [region1, region2]
+
+
+def _mask_conditioning_tokens_inplace(tokens: np.ndarray, tokenizer_id: str, mask_id: np.ndarray, start_bar: int, end_bar: int):
+    """Overwrite the masked region in-place with the sampler's mask token(s).
+
+    This is the mechanism used by AbsorbingDiffusion: positions equal to mask_id are
+    considered *unknown* and will be sampled, while all other positions are treated
+    as conditioning.
+    """
+    if start_bar < 0 or end_bar < 0 or end_bar <= start_bar:
+        raise ValueError(f"Invalid mask region: start={start_bar}, end={end_bar}")
+
+    # Octuple encoding: identify positions by Bar token in column 0.
+    if "octuple" in tokenizer_id:
+        if tokens.ndim != 3 or tokens.shape[-1] != mask_id.shape[0]:
+            raise ValueError(
+                f"Expected octuple tokens with shape (B, T, C=8), got {tokens.shape}; mask_id shape={mask_id.shape}"
+            )
+
+        bar_tokens = tokens[:, :, 0]
+        mask_pos = (bar_tokens >= start_bar) & (bar_tokens < end_bar)  # (B, T)
+        # Broadcast mask_id (C,) onto (B, T, C)
+        tokens[mask_pos] = mask_id
+        return
+
+    # Grid / one-hot style: assume 16 steps per bar and mask along the time axis.
+    start_idx = start_bar * 16
+    end_idx = end_bar * 16
+    start_idx = max(0, start_idx)
+    end_idx = max(start_idx, end_idx)
+
+    if tokens.ndim == 2:
+        # (B, T)
+        tokens[:, start_idx:end_idx] = mask_id.item() if mask_id.size == 1 else mask_id[0].item()
+    elif tokens.ndim == 3:
+        # (B, T, C)
+        tokens[:, start_idx:end_idx, :] = mask_id.reshape(1, 1, -1)
+    else:
+        raise ValueError(f"Unexpected token array shape for masking: {tokens.shape}")
+
+
+def _list_midi_files(root_dir: str, limit: int | None = None) -> list[str]:
+    """Recursively list MIDI files under root_dir, excluding any under a 'versions' folder."""
+    root_path = Path(root_dir)
+    if not root_path.exists():
+        raise FileNotFoundError(f"Directory not found: {root_dir}")
+
+    exclude_dirs = {"versions"}
+    midi_paths = [
+        str(p)
+        for p in sorted(root_path.rglob("*.mid"))
+        if not any(part.lower() in exclude_dirs for part in p.parts)
+    ]
+    if limit is not None:
+        midi_paths = midi_paths[:limit]
+    return midi_paths
+
+
 def load_samples_from_dir(sample_dir, n_samples=None):
     """Load pre-generated samples from MIDI files."""
     print(f"Loading samples from {sample_dir}...")
-    
-    from glob import glob
-    midi_files = sorted(glob(os.path.join(sample_dir, "*.mid")))
-    
-    if n_samples:
-        midi_files = midi_files[:n_samples]
+
+    midi_files = _list_midi_files(sample_dir, limit=n_samples)
     
     from smdiff.utils.sampler_utils import ns_to_np
     samples = []
@@ -103,12 +191,17 @@ def load_samples_from_dir(sample_dir, n_samples=None):
     return samples
 
 
-def setup_infilling(args, tokenizer_id):
-    """Prepare conditioning tokens for infilling from one or many MIDIs."""
+def setup_infilling(args, tokenizer_id: str, mask_id: np.ndarray):
+    """Prepare conditioning tokens for infilling from one or many MIDIs.
+
+    Returns:
+        conditioning_tokens: (B, T, C) or (B, T) numpy array where masked region is set to mask_id
+        originals_tokens:    numpy array with the corresponding unmasked ground truth (same shape)
+        region_index:        list[int] of length B, where each entry is which region was used (0 or 1)
+    """
     midi_files = []
     if args.input_midi_dir:
-        from glob import glob
-        midi_files = sorted(glob(os.path.join(args.input_midi_dir, "*.mid")))
+        midi_files = _list_midi_files(args.input_midi_dir, limit=args.n_midis)
         if not midi_files:
             raise ValueError(f"No MIDI files found in --input_midi_dir={args.input_midi_dir}")
     elif args.input_midi:
@@ -116,23 +209,51 @@ def setup_infilling(args, tokenizer_id):
     else:
         raise ValueError("Infill generation requires --input_midi or --input_midi_dir")
 
+    mask_regions = _resolve_infill_mask_regions(args)
+
     bars = 64
-    tokens_list = []
+    conditioning_list = []
+    originals_list = []
+    region_index: list[int] = []
+
     for midi_path in midi_files:
         print(f"Conditioning on MIDI: {midi_path}")
-        with open(midi_path, 'rb') as f:
+        with open(midi_path, "rb") as f:
             ns = midi_to_note_sequence(f.read())
+
         tokens = ns_to_np(ns, bars, tokenizer_id)
         if tokens.ndim == 2:
             tokens = tokens[np.newaxis, :]
-        tokens_rep = np.repeat(tokens, args.samples_per_midi, axis=0)
-        tokens_list.append(tokens_rep)
 
-    tokens = np.concatenate(tokens_list, axis=0)
+        for region_i, (start_bar, end_bar) in enumerate(mask_regions):
+            masked_tokens = tokens.copy()
+            _mask_conditioning_tokens_inplace(masked_tokens, tokenizer_id, mask_id, start_bar, end_bar)
+
+            masked_rep = np.repeat(masked_tokens, args.samples_per_midi, axis=0)
+            orig_rep = np.repeat(tokens, args.samples_per_midi, axis=0)
+
+            conditioning_list.append(masked_rep)
+            originals_list.append(orig_rep)
+            region_index.extend([region_i] * masked_rep.shape[0])
+
+    conditioning = np.concatenate(conditioning_list, axis=0) if conditioning_list else np.empty((0,))
+    originals = np.concatenate(originals_list, axis=0) if originals_list else np.empty((0,))
+
+    # Keep args.n_samples behavior as a *cap*, but warn if it would break the expected
+    # (n_midis * samples_per_midi * n_regions) structure.
     if args.n_samples:
-        tokens = tokens[:args.n_samples]
+        expected = len(region_index)
+        if args.n_samples != expected and len(mask_regions) > 1 and args.n_midis is not None:
+            print(
+                f"[warn] --n_samples={args.n_samples} does not match expected {expected} "
+                f"(n_midis={args.n_midis} * samples_per_midi={args.samples_per_midi} * regions={len(mask_regions)}). "
+                f"Capping to --n_samples may truncate region2."
+            )
+        conditioning = conditioning[: args.n_samples]
+        originals = originals[: args.n_samples]
+        region_index = region_index[: args.n_samples]
 
-    return tokens
+    return conditioning, originals, region_index
 
 
 def generate_samples(args, H, tokenizer_id, device, task):
@@ -177,10 +298,12 @@ def generate_samples(args, H, tokenizer_id, device, task):
     
     conditioning = None
     original_tokens = None
+    region_index = None
     if task == "infill":
-        conditioning_np = setup_infilling(args, tokenizer_id)
+        # Use the sampler's mask_id token(s) to mark unknown region.
+        mask_id_np = sampler.mask_id.detach().cpu().numpy()
+        conditioning_np, original_tokens, region_index = setup_infilling(args, tokenizer_id, mask_id_np)
         args.n_samples = conditioning_np.shape[0]
-        original_tokens = conditioning_np.copy()
         conditioning = torch.from_numpy(conditioning_np).long().to(device)
 
     # Generate samples
@@ -210,8 +333,9 @@ def generate_samples(args, H, tokenizer_id, device, task):
     # Convert to list of (T, C) arrays
     samples = [final_samples[i] for i in range(len(final_samples))]
     originals = [original_tokens[i] for i in range(len(final_samples))] if original_tokens is not None else None
-    
-    return samples, originals
+    region_index_out = region_index[: len(final_samples)] if region_index is not None else None
+
+    return samples, originals, region_index_out
 
 
 def load_training_data(dataset_id, n_samples=1000):
@@ -245,6 +369,7 @@ def load_training_data(dataset_id, n_samples=1000):
 def evaluate_task(task, generated_samples, train_samples=None, original_samples=None, 
                   mask_start_step=None, mask_end_step=None):
     """Run task-specific evaluation."""
+    metrics = {}
     
     if task == "uncond":
         if train_samples is None:
@@ -303,11 +428,17 @@ def evaluate_task(task, generated_samples, train_samples=None, original_samples=
         print(f"  Sample Diversity: {metrics['sample_diversity']:.4f}")
         print(f"  Valid Samples: {metrics['valid_samples_pct']:.1f}%")
     
+    else:
+        raise ValueError(f"Unknown task '{task}'")
+
     return metrics
 
 
 def main():
     args = get_args()
+
+    # Validate second mask region args early.
+    _ = _resolve_infill_mask_regions(args)
     
     # Validate task
     task_spec = resolve_task_id(args.task)
@@ -324,6 +455,7 @@ def main():
     print(f"Metrics output directory: {args.output_dir}")
     
     generated_originals = None
+    generated_region_index = None
 
     # Load or generate samples
     if args.sample_dir:
@@ -366,7 +498,9 @@ def main():
         if args.sample_steps > 0:
             H.sample_steps = args.sample_steps
         
-        generated_samples, generated_originals = generate_samples(args, H, tokenizer_id, args.device, args.task)
+        generated_samples, generated_originals, generated_region_index = generate_samples(
+            args, H, tokenizer_id, args.device, args.task
+        )
         
         # Save samples if requested
         if args.save_samples:
@@ -379,6 +513,8 @@ def main():
     
     # Load training data for distribution comparison
     train_samples = load_training_data(args.dataset_id, n_samples=1000)
+
+    metrics = None
     
     # Task-specific evaluation
     if args.task == "uncond":
@@ -394,20 +530,68 @@ def main():
             original_samples = generated_originals
         else:
             # Fallback: slice training data
-            original_samples = train_samples[:len(generated_samples)]
-        
-        # Convert bar indices to steps
-        mask_start_step = args.mask_start_bar * 16
-        mask_end_step = args.mask_end_bar * 16
-        
-        metrics = evaluate_task(
-            "infill",
-            generated_samples,
-            train_samples=None,
-            original_samples=original_samples,
-            mask_start_step=mask_start_step,
-            mask_end_step=mask_end_step
-        )
+            original_samples = train_samples[: len(generated_samples)]
+
+        mask_regions = _resolve_infill_mask_regions(args)
+
+        # If two regions are requested and we generated with region tagging, evaluate per region
+        # (the masked region differs per sample, so a single mask window would be wrong).
+        if len(mask_regions) > 1 and generated_region_index is not None:
+            per_region_metrics = []
+            for region_i, (start_bar, end_bar) in enumerate(mask_regions):
+                idxs = [i for i, r in enumerate(generated_region_index) if r == region_i]
+                region_gen = [generated_samples[i] for i in idxs]
+                region_orig = [original_samples[i] for i in idxs]
+
+                mask_start_step = start_bar * 16
+                mask_end_step = end_bar * 16
+
+                metrics_i = evaluate_task(
+                    "infill",
+                    region_gen,
+                    train_samples=None,
+                    original_samples=region_orig,
+                    mask_start_step=mask_start_step,
+                    mask_end_step=mask_end_step,
+                )
+                per_region_metrics.append(((start_bar, end_bar), metrics_i))
+
+                metrics_file_i = os.path.join(
+                    args.output_dir, f"metrics_infill_region{region_i+1}_{start_bar}-{end_bar}.json"
+                )
+                with open(metrics_file_i, "w") as f:
+                    json.dump(metrics_i, f, indent=2)
+                print(f"\nRegion {region_i+1} metrics saved to: {metrics_file_i}")
+
+            # Also provide a combined view (simple mean of scalar metrics across regions where possible)
+            combined = {}
+            keys = set().union(*[m.keys() for _, m in per_region_metrics])
+            for k in keys:
+                vals = []
+                for _, m in per_region_metrics:
+                    v = m.get(k)
+                    if isinstance(v, (int, float, np.floating, np.integer)):
+                        vals.append(float(v))
+                if vals:
+                    combined[k] = float(np.mean(vals))
+
+            metrics = combined
+        else:
+            # Single-region infilling evaluation
+            mask_start_step = args.mask_start_bar * 16
+            mask_end_step = args.mask_end_bar * 16
+
+            metrics = evaluate_task(
+                "infill",
+                generated_samples,
+                train_samples=None,
+                original_samples=original_samples,
+                mask_start_step=mask_start_step,
+                mask_end_step=mask_end_step,
+            )
+
+    if metrics is None:
+        raise RuntimeError("Evaluation produced no metrics")
     
     # Save metrics to JSON
     metrics_file = os.path.join(args.output_dir, f"metrics_{args.task}.json")

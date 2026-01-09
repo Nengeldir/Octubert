@@ -15,7 +15,7 @@ source .venv/bin/activate
 export PYTHONPATH="$PWD/src:${PYTHONPATH:-}"
 
 nvidia-smi || true
-echo "Starting conv mini training on $(hostname)"
+echo "Starting evaluation on $(hostname)"
 echo "Date: $(date)"
 
 # Ensure logs directory exists
@@ -29,10 +29,23 @@ python -c "import torch; print('Torch:', torch.__version__, 'CUDA:', torch.cuda.
 MODEL_ID="octuple_ddpm"
 RUN_DIR="runs/octuple_ddpm_trio_octuple"  # Update to your actual run directory
 DATASET_ID="pop909_trio_octuple"
-N_SAMPLES=4
 
-# Navigate to repository
-cd ~/Octubert  # Update to your repository path
+# Mini smoke-test sizes (fast). Increase once the job works end-to-end.
+N_SAMPLES_UNCOND=8
+N_MIDIS=2
+SAMPLES_PER_MIDI=1
+
+# Two separate infill regions (NOT simultaneous): total infill samples = N_MIDIS * 2 * SAMPLES_PER_MIDI
+MASK1_START_BAR=4
+MASK1_END_BAR=8
+MASK2_START_BAR=16
+MASK2_END_BAR=20
+
+INFILL_MIDI_DIR="data/test/POP909"  # recursively searched; excludes any 'versions/' subfolders
+
+# Navigate to repository (prefer SLURM submission directory)
+REPO_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
+cd "$REPO_DIR"
 
 echo "========================================"
 echo "Starting Model Evaluation"
@@ -53,7 +66,7 @@ python -m smdiff.cli.evaluate \
     --model $MODEL_ID \
     --load_dir $RUN_DIR \
     --dataset_id $DATASET_ID \
-    --n_samples $N_SAMPLES \
+    --n_samples $N_SAMPLES_UNCOND \
     --sample_steps 100 \
     --batch_size 16 \
     --ema \
@@ -63,37 +76,28 @@ python -m smdiff.cli.evaluate \
 echo "Unconditional evaluation complete!"
 
 # ============================================================
-# EXAMPLE 2: INFILLING EVALUATION - USE EXISTING SAMPLES
+# EXAMPLE 2: INFILLING EVALUATION - GENERATE CONDITIONED SAMPLES
 # ============================================================
-# This configuration loads pre-generated samples from a directory
-# Use when: You already have samples and want to re-evaluate with different metrics
-# or save computation time
+# This configuration generates conditioned samples directly from MIDIs.
+# It will recursively scan --input_midi_dir and omit any files under 'versions/'.
 echo ""
-echo "Running infilling evaluation (using existing samples)..."
+echo "Running infilling evaluation (generating conditioned samples)..."
 
-# Path to pre-generated samples (update to where your samples are stored)
-SAMPLE_DIR="$RUN_DIR/samples/infill"
-
-# Note: If samples don't exist yet, first generate them with sample.py:
-# python -m smdiff.cli.sample \
-#     --task infill \
-#     --model $MODEL_ID \
-#     --load_dir $RUN_DIR \
-#     --dataset_id $DATASET_ID \
-#     --n_samples $N_SAMPLES \
-#     --mask_start_bar 16 \
-#     --mask_end_bar 32 \
-#     --output_dir $SAMPLE_DIR
-
-# Run evaluation using existing samples
+# This uses --input_midi_dir and runs each MIDI twice (region1 then region2),
+# producing N_MIDIS * 2 * SAMPLES_PER_MIDI samples.
 python -m smdiff.cli.evaluate \
     --task infill \
-    --sample_dir $SAMPLE_DIR \
+    --model $MODEL_ID \
+    --load_dir $RUN_DIR \
     --dataset_id $DATASET_ID \
-    --n_samples $N_SAMPLES \
-    --mask_start_bar 4 \
-    --mask_end_bar 16 \
-    --input_midi_dir data/POP909 \
+    --input_midi_dir "$INFILL_MIDI_DIR" \
+    --n_midis $N_MIDIS \
+    --samples_per_midi $SAMPLES_PER_MIDI \
+    --mask_start_bar $MASK1_START_BAR \
+    --mask_end_bar $MASK1_END_BAR \
+    --mask2_start_bar $MASK2_START_BAR \
+    --mask2_end_bar $MASK2_END_BAR \
+    --n_samples $((N_MIDIS * 2 * SAMPLES_PER_MIDI)) \
     --output_dir $RUN_DIR/metrics \
     --device cuda
 

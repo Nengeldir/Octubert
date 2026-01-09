@@ -143,7 +143,7 @@ def load_dataset(root_dir: str,
 
 def main():
     parser = argparse.ArgumentParser(description="Prepare POP909 datasets (Standard and Octuple formats)")
-    parser.add_argument("--root_dir", type=str, default="data/POP909", help="Root directory of the dataset")
+    parser.add_argument("--root_dir", type=str, default="data/train/POP909", help="Root directory of the dataset")
     parser.add_argument("--tokenizer_id", type=str, default="melody",
                         choices=["melody", "trio", "melody_octuple", "trio_octuple"],
                         help="Tokenizer to use: OneHot (melody/trio) or Octuple (melody/trio)")

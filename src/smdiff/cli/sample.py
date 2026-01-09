@@ -93,8 +93,9 @@ def setup_infilling(args, H, tokenizer_id, device):
     if args.n_samples:
         tokens = tokens[:args.n_samples]
 
-    # Create Mask (1=Keep/Known, 0=Masked/Generate)
-    mask = np.ones_like(tokens)
+    # AbsorbingDiffusion uses a special mask token (mask_id) to mark unknown positions.
+    # In this codebase, that mask token is passed as H.codebook_size.
+    mask_id = np.array(H.codebook_size, dtype=np.int64)
 
     is_octuple = "octuple" in tokenizer_id
 
@@ -104,7 +105,12 @@ def setup_infilling(args, H, tokenizer_id, device):
         for b in range(tokens.shape[0]):
             bar_tokens = tokens[b, :, 0]
             mask_idx = (bar_tokens >= args.mask_start_bar) & (bar_tokens < args.mask_end_bar)
-            mask[b, mask_idx, :] = 0
+            # Actually apply mask token to conditioning sequence for the sampler.
+            # (Sampler fills positions where x_T == mask_id.)
+            if mask_id.ndim == 0:
+                tokens[b, mask_idx, :] = mask_id
+            else:
+                tokens[b, mask_idx, :] = mask_id.reshape(1, -1)
     else:
         # Grid: Fixed steps (16 per bar)
         notes = H.NOTES if hasattr(H, 'NOTES') else H.get('NOTES', 1024)
@@ -112,9 +118,13 @@ def setup_infilling(args, H, tokenizer_id, device):
         end_idx = args.mask_end_bar * 16
         start_idx = max(0, min(start_idx, notes))
         end_idx = max(0, min(end_idx, notes))
-        mask[:, start_idx:end_idx] = 0
+        # Apply mask token for sampler.
+        if mask_id.ndim == 0:
+            tokens[:, start_idx:end_idx] = mask_id
+        else:
+            tokens[:, start_idx:end_idx] = mask_id.item() if mask_id.size == 1 else mask_id.reshape(1, 1, -1)
 
-    return torch.from_numpy(tokens).long().to(device), torch.from_numpy(mask).float().to(device)
+    return torch.from_numpy(tokens).long().to(device)
 
 def main():
     args = get_args()
@@ -223,7 +233,7 @@ def main():
     mask = None
 
     if task_spec.id == 'infill':
-        x_T, mask = setup_infilling(args, H, tokenizer_id, args.device)
+        x_T = setup_infilling(args, H, tokenizer_id, args.device)
         # Sync n_samples with actual conditioning batch (may come from many MIDIs)
         args.n_samples = x_T.shape[0]
     elif task_spec.id == 'uncond':
