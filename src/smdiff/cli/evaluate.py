@@ -134,7 +134,15 @@ def _mask_conditioning_tokens_inplace(tokens: np.ndarray, tokenizer_id: str, mas
             )
 
         bar_tokens = tokens[:, :, 0]
+        # DEBUG: Print bar ranges before masking
+        print(f"[DEBUG MASK] Request: Bars {start_bar}-{end_bar}. Found bar values in sample 0: {np.unique(bar_tokens[0])}")
+        
         mask_pos = (bar_tokens >= start_bar) & (bar_tokens < end_bar)  # (B, T)
+        
+        # DEBUG: Check if we actually masked anything
+        n_masked = mask_pos.sum()
+        print(f"[DEBUG MASK] Masked {n_masked} tokens in sample 0.")
+        
         # Broadcast mask_id (C,) onto (B, T, C)
         tokens[mask_pos] = mask_id
         return
