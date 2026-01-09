@@ -60,17 +60,25 @@ class AbsorbingDiffusion(Sampler):
 
     def q_sample(self, x_0, t):
         # samples q(x_t | x_0)
-        # randomly set token to mask with probability t/T
+        # Randomly set *tokens* to mask with probability t/T.
+        #
+        # For Octuple (or Trio/Melody), we interpret a "token" as one timestep in the
+        # sequence, i.e. we mask all channels at that position together.
         x_t, x_0_ignore = x_0.clone(), x_0.clone()
 
-        mask_track_flag = np.random.randint(0, 1, [len(self.mask_id)])
-        if mask_track_flag.sum() == 0:
-            mask_track_flag[:] = 1
+        b, seq_len = x_t.shape[0], x_t.shape[1]
+        device = x_t.device
 
-        mask = torch.rand_like(x_t.float()) < (t.view(-1, *((1,) * (len(x_t.shape) - 1))).float() / self.num_timesteps)
+        # mask positions (B, L) with prob t/T per sample
+        time_prob = (t.float() / self.num_timesteps).view(-1, 1)
+        mask_pos = torch.rand((b, seq_len), device=device) < time_prob
+
+        # expand to all channels (B, L, C)
+        mask = mask_pos.unsqueeze(-1).expand_as(x_t)
+
         for i in range(len(self.mask_id)):
-            if mask_track_flag[i]:
-                x_t[:, :, i][mask[:, :, i]] = self.mask_id[i]
+            x_t[:, :, i][mask_pos] = self.mask_id[i]
+
         x_0_ignore[torch.bitwise_not(mask)] = -1
         return x_t, x_0_ignore, mask
 
@@ -129,19 +137,9 @@ class AbsorbingDiffusion(Sampler):
             current_strategy = strategies[np.random.randint(len(strategies))]
         
         # If 'random' is selected (either explicitly or via mixed), use standard q_sample
-        # But q_sample returns (x_t, x_0_ignore, mask).
-        # Here we want to match the return signature and logic.
+        # (token-level/octuple masking).
         if current_strategy == 'random':
-             # Use standard q_sample logic (Bernoulli mask based on t)
-             # q_sample logic: mask = rand < t/T
-             # We can just replicate it here efficiently
-             mask = torch.rand_like(x_t.float()) < time_prob.view(-1, 1, 1)
-             
-             # Apply mask
-             for i in range(len(self.mask_id)):
-                x_t[:, :, i][mask[:, :, i]] = self.mask_id[i]
-             x_0_ignore[torch.bitwise_not(mask)] = -1
-             return x_t, x_0_ignore, mask
+            return self.q_sample(x_0=x_0, t=t)
 
         if current_strategy == '1_bar_all':
             # Mask Pitch, Duration, Velocity, Tempo over 1 bar
@@ -156,10 +154,10 @@ class AbsorbingDiffusion(Sampler):
             # Find unique bars per sample is expensive. 
             # Let's assume standard Octuple structure where [:, :, 0] are bar indices.
             bar_indices = x_0[:, :, 0]
-            max_bars = bar_indices.max(dim=1)[0] # (Batch,)
-    
-            # Select random bar per sample
-            target_bars = (torch.rand(b, device=device) * (max_bars.float() + 1)).long() # (Batch,)
+
+            # Select an existing bar per sample by picking a random position in the sequence
+            rand_pos = torch.randint(0, seq_len, (b,), device=device)
+            target_bars = bar_indices[torch.arange(b, device=device), rand_pos]
             
             # Expand for broadcasting
             target_bars_exp = target_bars.unsqueeze(1).expand(-1, seq_len) # (Batch, SeqLen)
@@ -179,14 +177,12 @@ class AbsorbingDiffusion(Sampler):
         elif current_strategy == '2_bar_all':
             # Mask Pitch, Duration, Velocity, Tempo over 2 bars
             bar_indices = x_0[:, :, 0]
-            max_bars = bar_indices.max(dim=1)[0]
-            
-            # Need to pick 2 distinct bars. Simplest: pick start random, wrap around or clamp.
-            # Better: pick 2 random integers per batch.
-            r1 = (torch.rand(b, device=device) * (max_bars.float() + 1)).long()
-            r2 = (torch.rand(b, device=device) * (max_bars.float() + 1)).long()
-            # If r1 == r2, it effectively masks 1 bar. That's acceptable randomness, or we could force distinct.
-            # Let's simple random, allowing overlap (rare for large bar counts).
+
+            # Pick two (possibly identical) existing bars per sample
+            rand_pos1 = torch.randint(0, seq_len, (b,), device=device)
+            rand_pos2 = torch.randint(0, seq_len, (b,), device=device)
+            r1 = bar_indices[torch.arange(b, device=device), rand_pos1]
+            r2 = bar_indices[torch.arange(b, device=device), rand_pos2]
             
             target_bars1 = r1.unsqueeze(1).expand(-1, seq_len)
             target_bars2 = r2.unsqueeze(1).expand(-1, seq_len)
@@ -204,8 +200,9 @@ class AbsorbingDiffusion(Sampler):
             # Per sample defined strategy
             
             bar_indices = x_0[:, :, 0]
-            max_bars = bar_indices.max(dim=1)[0]
-            target_bars = (torch.rand(b, device=device) * (max_bars.float() + 1)).long()
+
+            rand_pos = torch.randint(0, seq_len, (b,), device=device)
+            target_bars = bar_indices[torch.arange(b, device=device), rand_pos]
             target_bars_exp = target_bars.unsqueeze(1).expand(-1, seq_len)
             
             # Available attributes: 3, 4, 5, 7
@@ -226,9 +223,11 @@ class AbsorbingDiffusion(Sampler):
             # Randomly pick ONE of {Pitch, Dur, Vel, Tempo} and mask it for 2 random bars
             
             bar_indices = x_0[:, :, 0]
-            max_bars = bar_indices.max(dim=1)[0]
-            r1 = (torch.rand(b, device=device) * (max_bars.float() + 1)).long()
-            r2 = (torch.rand(b, device=device) * (max_bars.float() + 1)).long()
+
+            rand_pos1 = torch.randint(0, seq_len, (b,), device=device)
+            rand_pos2 = torch.randint(0, seq_len, (b,), device=device)
+            r1 = bar_indices[torch.arange(b, device=device), rand_pos1]
+            r2 = bar_indices[torch.arange(b, device=device), rand_pos2]
             
             target_bars1 = r1.unsqueeze(1).expand(-1, seq_len)
             target_bars2 = r2.unsqueeze(1).expand(-1, seq_len)
@@ -265,21 +264,16 @@ class AbsorbingDiffusion(Sampler):
         # "on the maximum t (1024) the probability of masking ... is 100% and it decreases until t=0... is 0%"
         # Effectively: Final_Mask = Candidate_Mask AND (Bernoulli(t/T))
         
-        # Make random mask for time dependence
-        time_rand_mask = torch.rand_like(x_t.float()) < (time_prob.view(-1, 1, 1))
-        
+        # Diffusion time gating (t/T), applied at the *unit* level.
+        # This preserves "mask simultaneously" within each (bar, attribute) unit.
+        gate = (torch.rand((b,), device=device) < time_prob).view(-1, 1, 1)
+
         # Combine
-        mask = candidate_mask & time_rand_mask
-        
-        # Apply mask
-        x_t[mask] = self.mask_id[0] # Assuming broadcast or single mask_id, logic below handles tuple mask_id
-        
-        # Fix for tuple mask_id since AbsorbingDiffusion uses a list/tensor of mask_ids for different channels if needed?
-        # Original code: x_t[:, :, i][mask[:, :, i]] = self.mask_id[i]
-        # Our mask is (B, L, 8). self.mask_id is likely shape (8,)
-        
+        mask = candidate_mask & gate
+
+        # Apply per-channel mask token
         for i in range(len(self.mask_id)):
-             x_t[:, :, i][mask[:, :, i]] = self.mask_id[i]
+            x_t[:, :, i][mask[:, :, i]] = self.mask_id[i]
         
         x_0_ignore[torch.bitwise_not(mask)] = -1
         

@@ -45,7 +45,7 @@ class HparamsAbsorbing(HparamsBase):
         self.lr = 5e-4
         self.warmup_iters = 10000
         self.validation_set_size = 0.05
-        self.augment = True
+        self.augment = False
 
         self.apply_parser_values(parser)
 
@@ -96,7 +96,7 @@ class HparamsOctuple(HparamsAbsorbing):
     def __init__(self, parser):
         super().__init__(parser)
         
-        self.codebook_size = (2048, 128, 129, 256, 128, 32, 256, 49)
+        # time, tempo, bar, position, instrument/program, pitch, durration, velocity
+        self.codebook_size = (256, 128, 129, 128, 128, 32, 254, 49)
         self.latent_shape = (self.NOTES, 8)
-        # self.augment = False # Disable augmentation for Octuple initially
 

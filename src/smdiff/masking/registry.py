@@ -11,11 +11,41 @@ class MaskingSpec:
 
 
 MASKING_REGISTRY: Dict[str, MaskingSpec] = {
-    "1_bar_all": MaskingSpec(id="1_bar_all", description="Mask all attributes in one random bar"),
-    "2_bar_all": MaskingSpec(id="2_bar_all", description="Mask all attributes in two random bars"),
-    "1_bar_attribute": MaskingSpec(id="1_bar_attribute", description="Mask one attribute in one random bar"),
-    "2_bar_attribute": MaskingSpec(id="2_bar_attribute", description="Mask one attribute in two random bars"),
-    "rand_attribute": MaskingSpec(id="rand_attribute", description="Mask one attribute across the whole sequence"),
+    # Note: In diffusion training we still apply time gating (t/T). The descriptions below
+    # describe the *structural* masking unit; the final mask is gated by t/T.
+    "random": MaskingSpec(
+        id="random",
+        description="Token-level masking: mask whole token (all channels) at random positions",
+    ),
+    "mixed": MaskingSpec(
+        id="mixed",
+        description="Randomly choose one masking strategy per batch (includes 'random')",
+    ),
+    "1_bar_all": MaskingSpec(
+        id="1_bar_all",
+        description="Bar-level masking: select 1 bar and mask the selected attribute set for that bar",
+        notes="Implementation masks attributes {pitch,duration,velocity,tempo} (channels 3,4,5,7), gated by t/T.",
+    ),
+    "2_bar_all": MaskingSpec(
+        id="2_bar_all",
+        description="Bar-level masking: select 2 bars and mask the selected attribute set for those bars",
+        notes="Implementation masks attributes {pitch,duration,velocity,tempo} (channels 3,4,5,7), gated by t/T. Bars may coincide.",
+    ),
+    "1_bar_attribute": MaskingSpec(
+        id="1_bar_attribute",
+        description="Bar-level masking: select 1 bar and mask 1 attribute across that entire bar",
+        notes="Attribute is chosen from {pitch,duration,velocity,tempo} (channels 3,4,5,7), gated by t/T.",
+    ),
+    "2_bar_attribute": MaskingSpec(
+        id="2_bar_attribute",
+        description="Bar-level masking: select 2 bars and mask 1 attribute across those bars",
+        notes="Attribute is chosen from {pitch,duration,velocity,tempo} (channels 3,4,5,7), gated by t/T. Bars may coincide.",
+    ),
+    "rand_attribute": MaskingSpec(
+        id="rand_attribute",
+        description="Attribute-level masking: select 1 attribute and mask it across the whole sequence",
+        notes="Attribute is chosen from {pitch,duration,velocity,tempo} (channels 3,4,5,7), gated by t/T.",
+    ),
 }
 
 
