@@ -88,7 +88,9 @@ def evaluate_infilling(generated_samples, original_samples, mask_start_step, mas
             g_trunc = gen[:min_len]
             o_trunc = orig[:min_len]
             
-            pitch_accs.append(_pitch_accuracy(g_trunc, o_trunc, pitch_idx=pitch_idx))
+            p_acc = _pitch_accuracy(g_trunc, o_trunc, pitch_idx=pitch_idx)
+            pitch_accs.append(p_acc)
+            
             if duration_idx is not None:
                 duration_accs.append(_duration_accuracy(g_trunc, o_trunc, duration_idx=duration_idx))
             else:

@@ -30,8 +30,8 @@ python -c "import torch; print('Torch:', torch.__version__, 'CUDA:', torch.cuda.
 # Run unified training CLI with small settings
 python3 src/smdiff/cli/train.py \
   --model schmu_tx_vae \
-  --set tracks=melody \
-  --set dataset_path=data/POP909_melody.npy \
+  --set tracks=trio \
+  --set dataset_path=data/POP909_trio.npy \
   --set batch_size=4 \
   --set train_steps=400 \
   --set steps_per_log=10 \
@@ -40,6 +40,6 @@ python3 src/smdiff/cli/train.py \
   --set steps_per_checkpoint=400 \
   --wandb \
   --wandb_project "octubert-music" \
-  --wandb_name "mini-test-schmu-tx-vae-melody" \
+  --wandb_name "mini-test-schmu-tx-vae-trio" \
 
 echo "Job finished at $(date)"
