@@ -26,7 +26,7 @@ python -V || python3 -V
 python -c "import torch; print('Torch:', torch.__version__, 'CUDA:', torch.cuda.is_available())" || true
 
 # Configuration
-MODEL_ID="octuple_ddpm"
+MODEL_ID="schmu_tx_vae"
 RUN_DIR="runs/schmu_tx_vae_trio"  # Update to your actual run directory
 DATASET_ID="pop909_trio"
 
