@@ -35,7 +35,7 @@ class AbsorbingDiffusion(Sampler):
         self.task_queue = []
 
         # Set seed
-        torch.manual_seed(self.seed)
+        # torch.manual_seed(self.seed) # Handled globally in trainer
 
     def sample_time(self, b, device, method='uniform'):
         if method == 'importance':

@@ -71,6 +71,8 @@ def build_underlying_argv(cfg: Dict, ns: argparse.Namespace) -> List[str]:
         args += ["--port", str(pick("port"))]
     if pick("masking_strategy"):
         args += ["--masking_strategy", pick("masking_strategy")]
+    if pick("seed"):
+        args += ["--seed", str(pick("seed"))]
 
     return args
 
@@ -113,6 +115,7 @@ def main():
     parser.add_argument("--load_step", type=int, default=None)
     parser.add_argument("--log_base_dir", type=str, default=None)
     parser.add_argument("--port", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=None)
     
     # wanDB
     parser.add_argument("--wandb", const=True, action="store_const", default=False, help="Enable WandB logging")

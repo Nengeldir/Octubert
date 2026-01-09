@@ -30,6 +30,13 @@ def main(H):
     """
 
     # --- DATA SETUP ---
+    # Set seed for reproducibility before data splitting
+    if hasattr(H, 'seed') and H.seed is not None:
+        log(f"Setting global seed to {H.seed}")
+        torch.manual_seed(H.seed)
+        np.random.seed(H.seed)
+        # random.seed(H.seed) # if needed
+
     data_np = np.load(H.dataset_path, allow_pickle=True)
     log("Tokenizer ID: " + H.tokenizer_id)
     midi_data = SimpleNpyDataset(data_np, H.NOTES, tokenizer_id=getattr(H, 'tokenizer_id', None))
