@@ -75,14 +75,29 @@ def setup_infilling(args, H, tokenizer_id, device):
         raise ValueError("Task 'infill' requires --input_midi or --input_midi_dir.")
 
     bars = 64
+    seq_len = getattr(H, 'NOTES', 1024)
     tokens_list = []
     for midi_path in midi_files:
         print(f"Processing input MIDI for infilling: {midi_path}")
         with open(midi_path, 'rb') as f:
             ns = midi_to_note_sequence(f.read())
         tokens = ns_to_np(ns, bars, tokenizer_id)
-        if tokens.ndim == 2:
-            tokens = tokens[np.newaxis, :]
+        
+        # Pad or Crop to seq_len
+        if tokens.ndim == 1:
+            if tokens.shape[0] < seq_len:
+                tokens = np.concatenate([tokens, np.zeros(seq_len - tokens.shape[0], dtype=tokens.dtype)], axis=0)
+            elif tokens.shape[0] > seq_len:
+                tokens = tokens[:seq_len]
+            tokens = tokens[np.newaxis, :] # (1, T)
+        elif tokens.ndim == 2:
+            if tokens.shape[0] < seq_len:
+                 padding = np.zeros((seq_len - tokens.shape[0], tokens.shape[1]), dtype=tokens.dtype)
+                 tokens = np.concatenate([tokens, padding], axis=0)
+            elif tokens.shape[0] > seq_len:
+                 tokens = tokens[:seq_len, :]
+            tokens = tokens[np.newaxis, :, :] # (1, T, C)
+            
         # Repeat per conditioning MIDI
         tokens_rep = np.repeat(tokens, args.samples_per_midi, axis=0)
         tokens_list.append(tokens_rep)

@@ -314,7 +314,8 @@ class AbsorbingDiffusion(Sampler):
             denom[denom == 0] = 1  # prevent divide by 0 errors.
             loss = cross_entropy_loss / denom
         elif self.loss_type == 'reweighted_elbo':
-            weight = (1 - (t / self.num_timesteps))
+            # Fix: Use (T+1) to ensure weight is never exactly 0 at t=T
+            weight = (1 - (t / (self.num_timesteps + 1)))
             loss = weight * cross_entropy_loss
             loss = loss / (math.log(2) * x_0.shape[1:].numel())
         else:

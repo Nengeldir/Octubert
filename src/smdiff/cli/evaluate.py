@@ -191,7 +191,7 @@ def load_samples_from_dir(sample_dir, n_samples=None):
     return samples
 
 
-def setup_infilling(args, tokenizer_id: str, mask_id: np.ndarray):
+def setup_infilling(args, tokenizer_id: str, mask_id: np.ndarray, seq_len: int):
     """Prepare conditioning tokens for infilling from one or many MIDIs.
 
     Returns:
@@ -223,12 +223,60 @@ def setup_infilling(args, tokenizer_id: str, mask_id: np.ndarray):
 
         tokens = ns_to_np(ns, bars, tokenizer_id)
         if tokens.ndim == 2:
-            tokens = tokens[np.newaxis, :]
+            tokens = tokens[np.newaxis, :]  # (1, T, C) or (1, T)
+        
+        # Pad or Crop to seq_len (H.NOTES)
+        # tokens is typically (1, varies, C) or (varies, C) -> we ensured (1, T, C) above if ndim=2?
+        # Actually ns_to_np returns (T, C) or (T,).
+        # If ndim==2, it means (T, C). Then we add batch dim: (1, T, C).
+        # But wait, logic below assumes (1, T, C) if ndim was 2.
+        # If ndim was 1 (T,), tokens is (T,). We didn't unsqueeze? 
+        # Original code: if tokens.ndim == 2: tokens = tokens[np.newaxis, :]
+        # This seems to assume (T, C) -> (1, T, C). And (T,) stays (T,).
+        
+        # Fix shape handling for padding
+        if tokens.ndim == 1:
+             # (T,)
+             curr_len = tokens.shape[0]
+             if curr_len < seq_len:
+                 padding = np.zeros((seq_len - curr_len,), dtype=tokens.dtype)
+                 tokens = np.concatenate([tokens, padding], axis=0)
+             elif curr_len > seq_len:
+                 tokens = tokens[:seq_len]
+        else:
+             # (B, T, C) or (T, C)?
+             # ns_to_np returns (T, C).
+             # Previous code: if tokens.ndim == 2: tokens = tokens[np.newaxis, :]. Now (1, T, C).
+             # So we are dealing with (1, T, C) or (T, C).
+             # Let's standardize on (T, C) or (T,) before adding batch dim.
+             pass
 
+        # Re-implement shape standardization to be safe
+        tokens = ns_to_np(ns, bars, tokenizer_id)
+        
+        if tokens.ndim == 1:
+            # (T,)
+            if tokens.shape[0] < seq_len:
+                tokens = np.concatenate([tokens, np.zeros(seq_len - tokens.shape[0], dtype=tokens.dtype)], axis=0)
+            elif tokens.shape[0] > seq_len:
+                tokens = tokens[:seq_len]
+            # Add batch dim
+            tokens = tokens[np.newaxis, :] # (1, T)
+        elif tokens.ndim == 2:
+            # (T, C)
+            if tokens.shape[0] < seq_len:
+                 padding = np.zeros((seq_len - tokens.shape[0], tokens.shape[1]), dtype=tokens.dtype)
+                 tokens = np.concatenate([tokens, padding], axis=0)
+            elif tokens.shape[0] > seq_len:
+                 tokens = tokens[:seq_len, :]
+            # Add batch dim
+            tokens = tokens[np.newaxis, :, :] # (1, T, C)
+        
         for region_i, (start_bar, end_bar) in enumerate(mask_regions):
             masked_tokens = tokens.copy()
             _mask_conditioning_tokens_inplace(masked_tokens, tokenizer_id, mask_id, start_bar, end_bar)
 
+            # Repeat for samples_per_midi
             masked_rep = np.repeat(masked_tokens, args.samples_per_midi, axis=0)
             orig_rep = np.repeat(tokens, args.samples_per_midi, axis=0)
 
@@ -302,7 +350,9 @@ def generate_samples(args, H, tokenizer_id, device, task):
     if task == "infill":
         # Use the sampler's mask_id token(s) to mark unknown region.
         mask_id_np = sampler.mask_id.detach().cpu().numpy()
-        conditioning_np, original_tokens, region_index = setup_infilling(args, tokenizer_id, mask_id_np)
+        # Ensure we pad/crop to the model's sequence length (H.NOTES)
+        seq_len = getattr(H, 'NOTES', 1024)
+        conditioning_np, original_tokens, region_index = setup_infilling(args, tokenizer_id, mask_id_np, seq_len)
         args.n_samples = conditioning_np.shape[0]
         conditioning = torch.from_numpy(conditioning_np).long().to(device)
 
