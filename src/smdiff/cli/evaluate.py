@@ -417,7 +417,7 @@ def load_training_data(dataset_id, n_samples=1000):
 
 
 def evaluate_task(task, generated_samples, train_samples=None, original_samples=None, 
-                  mask_start_step=None, mask_end_step=None):
+                  mask_start_step=None, mask_end_step=None, is_octuple=False):
     """Run task-specific evaluation."""
     metrics = {}
     
@@ -453,10 +453,11 @@ def evaluate_task(task, generated_samples, train_samples=None, original_samples=
         print("\n" + "="*60)
         print("INFILLING METRICS")
         print("="*60)
-        
+            
         metrics = evaluate_infilling(
             generated_samples, original_samples,
-            mask_start_step, mask_end_step
+            mask_start_step, mask_end_step,
+            is_octuple=is_octuple  # Pass flag to metrics
         )
         
         print("\nReconstruction Accuracy (Masked Region):")
@@ -603,6 +604,7 @@ def main():
                     original_samples=region_orig,
                     mask_start_step=mask_start_step,
                     mask_end_step=mask_end_step,
+                    is_octuple=("octuple" in tokenizer_id)
                 )
                 per_region_metrics.append(((start_bar, end_bar), metrics_i))
 
@@ -638,6 +640,7 @@ def main():
                 original_samples=original_samples,
                 mask_start_step=mask_start_step,
                 mask_end_step=mask_end_step,
+                is_octuple=("octuple" in tokenizer_id)
             )
 
     if metrics is None:
