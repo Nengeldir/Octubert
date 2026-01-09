@@ -21,31 +21,17 @@ MASKING_REGISTRY: Dict[str, MaskingSpec] = {
         id="mixed",
         description="Randomly choose one masking strategy per batch (includes 'random')",
     ),
-    "1_bar_all": MaskingSpec(
-        id="1_bar_all",
-        description="Bar-level masking: select 1 bar and mask the selected attribute set for that bar",
-        notes="Implementation masks attributes {pitch,duration,velocity,tempo} (channels 3,4,5,7), gated by t/T.",
+    "bar_all": MaskingSpec(
+        id="bar_all",
+        description="Dynamic bar-level masking: masks K bars where K is proportional to t/T",
+        notes="Implementation masks attributes {pitch,duration,velocity,tempo}. K scales linearly with timestep.",
     ),
-    "2_bar_all": MaskingSpec(
-        id="2_bar_all",
-        description="Bar-level masking: select 2 bars and mask the selected attribute set for those bars",
-        notes="Implementation masks attributes {pitch,duration,velocity,tempo} (channels 3,4,5,7), gated by t/T. Bars may coincide.",
+    "bar_attribute": MaskingSpec(
+        id="bar_attribute",
+        description="Dynamic attribute-level masking: masks K (bar, attribute) pairs where K is proportional to t/T",
+        notes="Attribute is chosen from {pitch,duration,velocity,tempo}. K scales linearly with timestep.",
     ),
-    "1_bar_attribute": MaskingSpec(
-        id="1_bar_attribute",
-        description="Bar-level masking: select 1 bar and mask 1 attribute across that entire bar",
-        notes="Attribute is chosen from {pitch,duration,velocity,tempo} (channels 3,4,5,7), gated by t/T.",
-    ),
-    "2_bar_attribute": MaskingSpec(
-        id="2_bar_attribute",
-        description="Bar-level masking: select 2 bars and mask 1 attribute across those bars",
-        notes="Attribute is chosen from {pitch,duration,velocity,tempo} (channels 3,4,5,7), gated by t/T. Bars may coincide.",
-    ),
-    "rand_attribute": MaskingSpec(
-        id="rand_attribute",
-        description="Attribute-level masking: select 1 attribute and mask it across the whole sequence",
-        notes="Attribute is chosen from {pitch,duration,velocity,tempo} (channels 3,4,5,7), gated by t/T.",
-    ),
+    
 }
 
 

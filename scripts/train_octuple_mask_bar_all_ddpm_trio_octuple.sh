@@ -19,7 +19,7 @@ nvidia-smi || true
 python3 src/smdiff/cli/train.py \
   --model octuple_mask_ddpm \
   --dataset_id pop909_trio_octuple \
-  --masking_strategy bar_all \
+  --strategy bar_all \
   --batch_size 4 \
   --epochs 100 \
   --steps_per_log 10 \
