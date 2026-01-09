@@ -27,7 +27,7 @@ class HparamsAbsorbing(HparamsBase):
         self.loss_type = "reweighted_elbo"
         self.sample_type = "diffusion"
         self.mask_schedule = "random"
-        self.sample_schedule = "random"#"barwise"
+        self.sample_schedule = "random"
         self.attn_pdrop = 0.2
         self.embd_pdrop = 0.2
         self.resid_pdrop = 0.2
@@ -97,6 +97,6 @@ class HparamsOctuple(HparamsAbsorbing):
         super().__init__(parser)
         
         # time, tempo, bar, position, instrument/program, pitch, durration, velocity
-        self.codebook_size = (256, 128, 129, 128, 128, 32, 254, 49)
+        self.codebook_size = (260, 132, 133, 132, 132, 36, 258, 53)
         self.latent_shape = (self.NOTES, 8)
 

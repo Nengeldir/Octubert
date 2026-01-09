@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=schmu_conv_trio
-#SBATCH --output=logs/schmu_conv_trio_%j.out
-#SBATCH --error=logs/schmu_conv_trio_%j.err
+#SBATCH --job-name=oct_mask_trio
+#SBATCH --output=logs/oct_mask_trio_%j.out
+#SBATCH --error=logs/oct_mask_trio_%j.err
 #SBATCH --time=16:00:00
 #SBATCH --partition=student
 #SBATCH --account=deep_learning
@@ -17,8 +17,9 @@ mkdir -p logs
 nvidia-smi || true
 
 python3 src/smdiff/cli/train.py \
-  --model schmu_conv_vae \
-  --dataset_id pop909_trio \
+  --model octuple_mask_ddpm \
+  --dataset_id pop909_trio_octuple \
+  --masking_strategy mixed \
   --batch_size 4 \
   --epochs 100 \
   --steps_per_log 10 \
@@ -27,6 +28,6 @@ python3 src/smdiff/cli/train.py \
   --steps_per_checkpoint 5000 \
   --wandb \
   --wandb_project "octubert-music" \
-  --wandb_name "schmu-conv-vae-trio"
+  --wandb_name "octuple-mask-ddpm-trio-octuple"
 
 echo "Job finished at $(date)"
