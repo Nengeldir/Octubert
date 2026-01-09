@@ -175,7 +175,6 @@ class AbsorbingDiffusion(Sampler):
             return x_t, x_0_ignore, mask
 
         if current_strategy == 'bar_attribute':
-            # Strategy 3: Time-Dependent Bar-Attribute Units
             # Select K (Bar, Attribute) pairs where K ~ t/T * TotalUnits
             # Mask specific attributes in specific bars.
             
@@ -228,19 +227,7 @@ class AbsorbingDiffusion(Sampler):
             
             x_0_ignore[torch.bitwise_not(mask)] = -1
             return x_t, x_0_ignore, mask
-
-        elif current_strategy == 'rand_attribute':
-             # Randomly pick ONE of {Pitch, Dur, Vel, Tempo} and mask it randomly across the sequence
             
-            avail_attrs = torch.tensor([3, 4, 5, 7], device=device)
-            rand_indices = (torch.rand(b, device=device) * 4).long()
-            selected_attrs = avail_attrs[rand_indices]
-            
-            selected_attrs_exp = selected_attrs.unsqueeze(1).expand(-1, seq_len).unsqueeze(-1)
-            feature_indices = torch.arange(8, device=device).unsqueeze(0).unsqueeze(0).expand(b, seq_len, 8)
-            
-            candidate_mask = (feature_indices == selected_attrs_exp)
-
         else:
              # Fallback or error usage
              raise ValueError(f"Unknown masking strategy: {self.masking_strategy}")
