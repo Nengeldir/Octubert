@@ -429,7 +429,7 @@ def evaluate_task(task, generated_samples, train_samples=None, original_samples=
         print("UNCONDITIONAL GENERATION METRICS")
         print("="*60)
         
-        metrics = evaluate_unconditional(generated_samples, train_samples)
+        metrics = evaluate_unconditional(generated_samples, train_samples, is_octuple=is_octuple)
         
         print("\nDistribution Similarity:")
         print(f"  Pitch Class Histogram KL: {metrics['pch_kl']:.4f}")

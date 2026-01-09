@@ -58,7 +58,8 @@ def pitch_class_histogram(tokens, pitch_idx=2):
             pitches = tokens[:, :, pitch_idx].flatten()
     
     # Remove invalid pitches (e.g., > 127 or special tokens)
-    pitches = pitches[(pitches >= 0) & (pitches < 128)]
+    # Ignore 0 (padding/silence)
+    pitches = pitches[(pitches > 0) & (pitches < 128)]
     
     # Map to pitch classes (0-11)
     pitch_classes = pitches % 12
@@ -146,8 +147,8 @@ def note_density_per_bar(tokens, bar_idx=0, steps_per_bar=16):
     
     Args:
         tokens: List of (T, C) arrays OR (N, T, C) array
-        bar_idx: Index of bar number in the token tuple
-        steps_per_bar: Steps per bar (typically 16 for 16th notes)
+        bar_idx: Index of bar number inside token (Octuple) OR None (Grid/Implicit)
+        steps_per_bar: Steps per bar (typically 16 for 16th notes) - used for Grid
         
     Returns:
         Array of notes per bar for each sample
@@ -166,16 +167,48 @@ def note_density_per_bar(tokens, bar_idx=0, steps_per_bar=16):
     
     for sample in samples:
         sample = np.asarray(sample)
-        bars = sample[:, bar_idx]
-        unique_bars = np.unique(bars[bars >= 0])
         
-        notes_per_bar = []
-        for bar in unique_bars:
-            mask = bars == bar
-            notes_per_bar.append(mask.sum())
-        
-        densities.extend(notes_per_bar)
-    
+        # --- Octuple Case (Bar Index exists) ---
+        if bar_idx is not None and sample.ndim == 2 and sample.shape[1] > bar_idx:
+            bars = sample[:, bar_idx]
+            unique_bars = np.unique(bars[bars >= 0])
+            
+            notes_per_bar = []
+            for bar in unique_bars:
+                mask = bars == bar
+                notes_per_bar.append(mask.sum())
+            if notes_per_bar:
+                densities.extend(notes_per_bar)
+
+        # --- Grid Case (Implicit Bars by Time) ---
+        else:
+            # Assume constant time grid
+            # sample shape is (T,) or (T, C)
+            # pitches are non-zero/non-padding
+            
+            total_steps = len(sample)
+            num_bars = total_steps // steps_per_bar
+            
+            # Identify active notes (pitch > 0)
+            # If (T, C), any active channel counts as a note? Or sum of notes?
+            # Typically density = note onsets. 
+            # Simplified: Count > 0 entries per bar window
+            
+            if sample.ndim == 2:
+                # Sum active notes across tracks (e.g. Trio)
+                is_note = (sample > 0).sum(axis=1) # (T,) -> count of notes at each step
+            else:
+                 is_note = (sample > 0).astype(int) # (T,)
+            
+            for b in range(num_bars):
+                start = b * steps_per_bar
+                end = start + steps_per_bar
+                # extract window
+                window = is_note[start:end]
+                # Count note occurrences (non-zero steps? or discrete notes?)
+                # For grid, this approximates density
+                densities.append(np.sum(window))
+
     return np.array(densities)
 
 
@@ -234,7 +267,8 @@ def compute_pitch_range(tokens, pitch_idx=2):
         Pitch range in semitones
     """
     pitches = tokens[:, pitch_idx]
-    valid_pitches = pitches[(pitches >= 0) & (pitches < 128)]
+    # Ignore 0 (padding/silence)
+    valid_pitches = pitches[(pitches > 0) & (pitches < 128)]
     
     if len(valid_pitches) == 0:
         return 0
@@ -262,7 +296,8 @@ def compute_sample_diversity(tokens_list, pitch_idx=2, duration_idx=3):
         tokens = np.asarray(tokens)
         # Create feature vector
         pitches = tokens[:, pitch_idx]
-        valid_pitches = pitches[(pitches >= 0) & (pitches < 128)]
+        # Ignore 0 (padding/silence)
+        valid_pitches = pitches[(pitches > 0) & (pitches < 128)]
         pch = np.bincount(valid_pitches % 12, minlength=12)
         
         durations = tokens[:, duration_idx]
@@ -285,7 +320,8 @@ def compute_sample_diversity(tokens_list, pitch_idx=2, duration_idx=3):
     return np.mean(distances) if distances else 0.0
 
 
-def is_valid_sample(tokens, max_pitch=127, max_duration=255):
+
+def is_valid_sample(tokens, max_pitch=127, max_duration=255, pitch_idx=2, duration_idx=3):
     """
     Check if a sample is valid (decodable to MIDI).
     
@@ -293,17 +329,22 @@ def is_valid_sample(tokens, max_pitch=127, max_duration=255):
         tokens: (T, C) array
         max_pitch: Maximum valid pitch
         max_duration: Maximum valid duration
+        pitch_idx: Index of pitch token
+        duration_idx: Index of duration token
         
     Returns:
         Boolean indicating validity
     """
     # Check if pitches are in valid range
-    pitches = tokens[:, 2]
+    if tokens.ndim < 2 or tokens.shape[1] <= max(pitch_idx, duration_idx):
+        return False
+
+    pitches = tokens[:, pitch_idx]
     if np.any(pitches > max_pitch) or np.any(pitches < 0):
         return False
     
     # Check if durations are reasonable
-    durations = tokens[:, 3]
+    durations = tokens[:, duration_idx]
     if np.any(durations > max_duration) or np.any(durations < 0):
         return False
     
