@@ -7,7 +7,16 @@ import random
 
 class MusicBERTDataset(Dataset):
     def __init__(self, data_path, max_seq_len=1024, vocab_sizes=[258, 53, 260, 132, 133, 132, 132, 36]):
-        self.files = sorted(glob.glob(os.path.join(data_path, "*.npy")))
+        # Handle both directory of files and single .npy file (new format)
+        if os.path.isfile(data_path) and data_path.endswith('.npy'):
+            print(f"Loading dataset from single file: {data_path}")
+            self.data = np.load(data_path, allow_pickle=True)
+            self.mode = 'memory'
+        else:
+            print(f"Loading dataset from directory: {data_path}")
+            self.files = sorted(glob.glob(os.path.join(data_path, "*.npy")))
+            self.mode = 'files'
+
         self.max_seq_len = max_seq_len
         self.vocab_sizes = vocab_sizes
         
@@ -19,19 +28,44 @@ class MusicBERTDataset(Dataset):
         self.DATA_OFFSET = 4 # Shift data tokens by 4 to avoid collision
         
     def __len__(self):
+        if self.mode == 'memory':
+            return len(self.data)
         return len(self.files)
     
     def __getitem__(self, idx):
-        file_path = self.files[idx]
-        try:
-            # Load tokens: (seq_len, 8)
-            tokens = np.load(file_path)
-        except Exception as e:
-            print(f"Error loading {file_path}: {e}")
-            return self._get_empty_sample()
+        if self.mode == 'memory':
+            # 1. Get raw sequence from memory
+            tokens = self.data[idx]
+            
+            # --- Robustness fixes from base.py ---
+            # If x is a 0-d object array wrapping another array, extract it
+            if isinstance(tokens, np.ndarray) and tokens.ndim == 0 and tokens.dtype == object:
+                tokens = tokens.item()
+                
+            # If it's a list or object-dtype array, force conversion to int64
+            if not isinstance(tokens, np.ndarray) or tokens.dtype == object:
+                tokens = np.array(tokens, dtype=np.int64)
+        else:
+            # 1. Load from file
+            file_path = self.files[idx]
+            try:
+                # Load tokens: (seq_len, 8)
+                tokens = np.load(file_path)
+            except Exception as e:
+                print(f"Error loading {file_path}: {e}")
+                return self._get_empty_sample()
 
         if len(tokens) == 0:
             return self._get_empty_sample()
+
+        # 2. Random Crop (Data Augmentation) - BEFORE adding special tokens
+        # We need to reserve 2 slots for CLS and EOS tokens
+        content_max_len = self.max_seq_len - 2
+        
+        if len(tokens) > content_max_len:
+            # Shift window randomly
+            start = np.random.randint(0, len(tokens) - content_max_len + 1)
+            tokens = tokens[start : start + content_max_len]
 
         # Shift tokens to make space for special tokens
         tokens = tokens + self.DATA_OFFSET
@@ -47,13 +81,9 @@ class MusicBERTDataset(Dataset):
         
         tokens = np.vstack([cls_token, tokens, eos_token])
         
-        # Truncate if necessary (keep CLS and EOS)
+        # (Truncation is handled by Random Crop above, but safety check:)
         if len(tokens) > self.max_seq_len:
-            # Keep CLS, take first max_seq_len-2 tokens, add EOS
-            # Or just truncate the middle
-            tokens = np.vstack([tokens[:self.max_seq_len-1], eos_token])
-            # Ensure exact length
-            tokens = tokens[:self.max_seq_len]
+             tokens = tokens[:self.max_seq_len]
 
         # Create labels (copy of tokens)
         labels = tokens.copy()
