@@ -11,24 +11,58 @@ from .common import (
 )
 
 
-def evaluate_infilling(generated_samples, original_samples, mask_start_step, mask_end_step):
+def evaluate_infilling(generated_samples, original_samples, mask_start_step, mask_end_step, is_octuple=False):
     """
     Evaluate infilling quality with reconstruction and boundary metrics.
     
     Args:
         generated_samples: List of (T, C) generated token arrays
         original_samples: List of (T, C) original ground truth arrays
-        mask_start_step: Start timestep of masked region
-        mask_end_step: End timestep of masked region
+        mask_start_step: Start timestep of masked region (OR start step index for grid)
+        mask_end_step: End timestep of masked region (OR end step index for grid)
+        is_octuple: Whether samples are Octuple encoded (uses Bar column for masking)
         
     Returns:
         Dictionary of metrics
     """
     metrics = {}
     
+    # Define indices based on encoding
+    if is_octuple:
+        # Octuple indices: Bar=0, Pos=1, Prog=2, Pitch=3, Dur=4, Vel=5
+        pitch_idx = 3
+        duration_idx = 4
+        velocity_idx = 5
+        bar_idx = 0
+    else:
+        # Grid/Event-List (Melody/Trio)
+        # Shape is (T, 1) or (T, 3). Values are Pitches.
+        # No explicit Duration, Velocity, or Bar columns.
+        pitch_idx = 0 
+        duration_idx = None # Not available
+        velocity_idx = None # Not available
+        bar_idx = None # Implicit
+
     # Extract masked regions
-    gen_masked = [s[mask_start_step:mask_end_step] for s in generated_samples]
-    orig_masked = [s[mask_start_step:mask_end_step] for s in original_samples]
+    if is_octuple:
+        # Convert step indices back to bars (assuming 16 steps/bar)
+        start_bar = mask_start_step // 16
+        end_bar = mask_end_step // 16
+        
+        def extract_region(sample):
+            # Column 0 is Bar index
+            if sample.ndim != 2 or sample.shape[1] != 8:
+                return sample # fallback
+            bars = sample[:, 0]
+            mask = (bars >= start_bar) & (bars < end_bar)
+            return sample[mask]
+            
+        gen_masked = [extract_region(s) for s in generated_samples]
+        orig_masked = [extract_region(s) for s in original_samples]
+    else:
+        # Standard Grid/Image slicing
+        gen_masked = [s[mask_start_step:mask_end_step] for s in generated_samples]
+        orig_masked = [s[mask_start_step:mask_end_step] for s in original_samples]
     
     # Reconstruction accuracy metrics (in masked region)
     pitch_accs = []
@@ -36,26 +70,74 @@ def evaluate_infilling(generated_samples, original_samples, mask_start_step, mas
     token_accs = []
     
     for gen, orig in zip(gen_masked, orig_masked):
-        pitch_accs.append(_pitch_accuracy(gen, orig))
-        duration_accs.append(_duration_accuracy(gen, orig))
-        token_accs.append(_token_accuracy(gen, orig))
+        # Handle empty regions (if no notes in masked bars)
+        if len(gen) == 0 and len(orig) == 0:
+            # Perfect match if both empty
+            pitch_accs.append(100.0)
+            duration_accs.append(100.0)
+            token_accs.append(100.0)
+        elif len(gen) == 0 or len(orig) == 0:
+            # Mismatch if one is empty
+            pitch_accs.append(0.0)
+            duration_accs.append(0.0)
+            token_accs.append(0.0)
+        else:
+            # For Octuple, lengths might differ due to generation. 
+            # We can only compute accuracy on the min length (or treat length diff as error).
+            # Here we follow standard practice: truncation to min length for strict comparison.
+            min_len = min(len(gen), len(orig))
+            g_trunc = gen[:min_len]
+            o_trunc = orig[:min_len]
+            
+            pitch_accs.append(_pitch_accuracy(g_trunc, o_trunc, pitch_idx=pitch_idx))
+            if duration_idx is not None:
+                duration_accs.append(_duration_accuracy(g_trunc, o_trunc, duration_idx=duration_idx))
+            else:
+                duration_accs.append(0.0)
+            token_accs.append(_token_accuracy(g_trunc, o_trunc))
     
     metrics['pitch_accuracy'] = np.mean(pitch_accs)
     metrics['pitch_accuracy_std'] = np.std(pitch_accs)
-    metrics['duration_accuracy'] = np.mean(duration_accs)
-    metrics['duration_accuracy_std'] = np.std(duration_accs)
+    metrics['duration_accuracy'] = np.mean(duration_accs) if duration_accs else 0.0
+    metrics['duration_accuracy_std'] = np.std(duration_accs) if duration_accs else 0.0
     metrics['token_accuracy'] = np.mean(token_accs)
     metrics['token_accuracy_std'] = np.std(token_accs)
     
     # Musical quality in masked region
-    gen_pch = pitch_class_histogram(np.array(gen_masked))
-    orig_pch = pitch_class_histogram(np.array(orig_masked))
-    metrics['infilled_pch_kl'] = kl_divergence(orig_pch, gen_pch)
+    # For Octuple, histograms handle variable length arrays fine
+    if gen_masked:
+        # Filter out empty arrays for histogram calculation to avoid errors
+        gen_valid = [g for g in gen_masked if len(g) > 0]
+        orig_valid = [o for o in orig_masked if len(o) > 0]
+        
+        if gen_valid and orig_valid:
+            # Fix: Pass list directly to avoid object array creation issues
+            gen_pch = pitch_class_histogram(gen_valid, pitch_idx=pitch_idx)
+            orig_pch = pitch_class_histogram(orig_valid, pitch_idx=pitch_idx)
+            metrics['infilled_pch_kl'] = kl_divergence(orig_pch, gen_pch)
+        else:
+             metrics['infilled_pch_kl'] = 0.0
+    else:
+        metrics['infilled_pch_kl'] = 0.0
     
-    # Note density error
-    gen_densities = [len(g[g[:, 2] > 0]) for g in gen_masked]
-    orig_densities = [len(o[o[:, 2] > 0]) for o in orig_masked]
-    density_errors = [abs(g - o) / (mask_end_step - mask_start_step) 
+    # Note density error (notes/bar)
+    # Mask duration in bars:
+    if is_octuple:
+        mask_duration_bars = max(1, end_bar - start_bar)
+    else:
+        # Assuming 16 steps/bar for simple normalization, or just use raw count
+        mask_duration_bars = (mask_end_step - mask_start_step) / 16.0
+        
+    # Use pitch_idx for density if available, else use flatten check (all non-zeros)
+    def _count_notes(x, p_idx):
+        if p_idx is None: return np.count_nonzero(x) # Count all non-zero entries
+        if x.ndim > 1 and x.shape[1] > p_idx:
+            return len(x[x[:, p_idx] > 0])
+        return np.count_nonzero(x)
+
+    gen_densities = [_count_notes(g, pitch_idx) for g in gen_masked]
+    orig_densities = [_count_notes(o, pitch_idx) for o in orig_masked]
+    density_errors = [abs(g - o) / mask_duration_bars 
                       for g, o in zip(gen_densities, orig_densities)]
     metrics['infilled_density_error'] = np.mean(density_errors)
     
@@ -64,43 +146,80 @@ def evaluate_infilling(generated_samples, original_samples, mask_start_step, mas
     rhythm_smoothness = []
     
     for gen_full, orig_full in zip(generated_samples, original_samples):
-        # Check continuity at start boundary
-        if mask_start_step > 0:
-            pitch_diff_start = abs(
-                gen_full[mask_start_step, 2] - gen_full[mask_start_step - 1, 2]
-            )
-            pitch_smoothness.append(pitch_diff_start)
+        if is_octuple:
+            # Find boundary events by bar/time, not index
+            start_events = gen_full[gen_full[:, 0] == start_bar]
+            # Look for events right before start_bar
+            pre_events = gen_full[gen_full[:, 0] < start_bar]
             
-            rhythm_diff_start = abs(
-                gen_full[mask_start_step, 3] - gen_full[mask_start_step - 1, 3]
-            )
-            rhythm_smoothness.append(rhythm_diff_start)
-        
-        # Check continuity at end boundary
-        if mask_end_step < len(gen_full):
-            pitch_diff_end = abs(
-                gen_full[mask_end_step - 1, 2] - gen_full[mask_end_step, 2]
-            )
-            pitch_smoothness.append(pitch_diff_end)
+            # Simple heuristic: compare last event before mask and first event in mask
+            if len(start_events) > 0 and len(pre_events) > 0:
+                s_ev = start_events[0]
+                p_ev = pre_events[-1]
+                pitch_smoothness.append(abs(s_ev[pitch_idx] - p_ev[pitch_idx])) 
+                # Rhythm smoothness for Octuple is tricky (pos diff?), skipping for now.
+        else:
+            # Check continuity at start boundary
+            if mask_start_step > 0:
+                # Use index 0 if pitch_idx is 0 or None (flattened)
+                p_idx_eff = pitch_idx if pitch_idx is not None else 0
+                
+                # Check bounds
+                if gen_full.ndim == 1: # (T,)
+                    val_curr = gen_full[mask_start_step]
+                    val_prev = gen_full[mask_start_step - 1]
+                else: # (T, C)
+                    val_curr = gen_full[mask_start_step, p_idx_eff]
+                    val_prev = gen_full[mask_start_step - 1, p_idx_eff]
+                
+                pitch_diff_start = abs(val_curr - val_prev)
+                pitch_smoothness.append(pitch_diff_start)
+                
+                if duration_idx is not None and gen_full.ndim > 1:
+                    rhythm_diff_start = abs(
+                        gen_full[mask_start_step, duration_idx] - gen_full[mask_start_step - 1, duration_idx]
+                    )
+                    rhythm_smoothness.append(rhythm_diff_start)
             
-            rhythm_diff_end = abs(
-                gen_full[mask_end_step - 1, 3] - gen_full[mask_end_step, 3]
-            )
-            rhythm_smoothness.append(rhythm_diff_end)
+            # Check continuity at end boundary
+            if mask_end_step < len(gen_full):
+                p_idx_eff = pitch_idx if pitch_idx is not None else 0
+                if gen_full.ndim == 1:
+                   val_curr = gen_full[mask_end_step]
+                   val_prev = gen_full[mask_end_step - 1]
+                else:
+                   val_curr = gen_full[mask_end_step, p_idx_eff]
+                   val_prev = gen_full[mask_end_step - 1, p_idx_eff]
+
+                pitch_diff_end = abs(val_prev - val_curr)
+                pitch_smoothness.append(pitch_diff_end)
+                
+                if duration_idx is not None and gen_full.ndim > 1:
+                    rhythm_diff_end = abs(
+                        gen_full[mask_end_step - 1, duration_idx] - gen_full[mask_end_step, duration_idx]
+                    )
+                    rhythm_smoothness.append(rhythm_diff_end)
     
     metrics['boundary_pitch_smoothness'] = np.mean(pitch_smoothness) if pitch_smoothness else 0.0
     metrics['boundary_rhythm_smoothness'] = np.mean(rhythm_smoothness) if rhythm_smoothness else 0.0
     
     # General quality metrics (full samples)
-    self_sims = [compute_self_similarity(s) for s in generated_samples]
-    metrics['self_similarity'] = np.mean(self_sims)
+    if duration_idx is not None:
+        self_sims = [compute_self_similarity(s, pitch_idx=pitch_idx, duration_idx=duration_idx) for s in generated_samples]
+        metrics['self_similarity'] = np.mean(self_sims)
+    else:
+        metrics['self_similarity'] = 0.0 # TODO: support pitch-only self-similarity
     
-    pitch_ranges = [compute_pitch_range(s) for s in generated_samples]
+    pitch_ranges = [compute_pitch_range(s, pitch_idx=pitch_idx if pitch_idx is not None else 0) for s in generated_samples]
     metrics['pitch_range_mean'] = np.mean(pitch_ranges)
     
-    metrics['sample_diversity'] = compute_sample_diversity(generated_samples)
+    metrics['sample_diversity'] = compute_sample_diversity(generated_samples, 
+                                                         pitch_idx=pitch_idx if pitch_idx is not None else 0, 
+                                                         duration_idx=duration_idx if duration_idx is not None else 0)
     
-    valid_count = sum([is_valid_sample(s) for s in generated_samples])
+    valid_count = sum([is_valid_sample(s, 
+                                      pitch_idx=pitch_idx if pitch_idx is not None else 0, 
+                                      duration_idx=duration_idx if duration_idx is not None else 0) for s in generated_samples])
     metrics['valid_samples_pct'] = 100.0 * valid_count / len(generated_samples)
     
     return metrics
