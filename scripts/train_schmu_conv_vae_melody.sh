@@ -22,9 +22,10 @@ python3 src/smdiff/cli/train.py \
   --batch_size 4 \
   --epochs 100 \
   --steps_per_log 10 \
-  --steps_per_eval 3000 \
-  --steps_per_sample 3000 \
-  --steps_per_checkpoint 500 \
+  --steps_per_eval 1000 \
+  --steps_per_sample 10000 \
+  --steps_per_checkpoint 5000 \
+  --seed 67 \
   --wandb \
   --wandb_project "octubert-music" \
   --wandb_name "schmu-conv-vae-melody"
