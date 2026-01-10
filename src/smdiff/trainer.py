@@ -42,7 +42,7 @@ def main(H):
     midi_data = SimpleNpyDataset(data_np, H.NOTES, tokenizer_id=getattr(H, 'tokenizer_id', None))
     
     if getattr(H, 'wandb', False):
-        run_name = H.wandb_name if H.wandb_name else f"{H.model_id}_{H.tracks}"
+        run_name = H.wandb_name if H.wandb_name else f"{H.model_id}_{H.tracks}_{H.masking_strategy}"
         wandb.init(
             project=H.wandb_project, 
             name=run_name, 
