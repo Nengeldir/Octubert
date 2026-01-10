@@ -83,6 +83,9 @@ def load_model(model, model_load_name, step, log_dir, fallback_dirs=None, strict
     Returns:
         model: Model with loaded weights
     """
+    if step == 0:
+        step = "best"
+        
     ckpt_dir = os.path.join(log_dir, "checkpoints")
 
     friendly_name = _normalize_ckpt_name(model_load_name)
