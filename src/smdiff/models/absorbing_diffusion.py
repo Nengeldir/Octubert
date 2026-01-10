@@ -130,7 +130,6 @@ class AbsorbingDiffusion(Sampler):
             strategies = [
                 'bar_all',
                 'bar_attribute', 
-                'rand_attribute',
                 'random'
             ]
             # Select one strategy for the entire batch (simplest implementation)
