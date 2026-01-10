@@ -75,7 +75,9 @@ python evaluate_octuple.py \
     --load_dir $RUN_DIR \
     --input_midi_dir "$INFILL_MIDI_DIR" \
     --batch_size 4 \
-    --n_midis 2
+    --n_midis 2 \
+    --mask_token_start 256 \
+    --mask_token_end 512
 
 echo "Infilling evaluation complete!"
 

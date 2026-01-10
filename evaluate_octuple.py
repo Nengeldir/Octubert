@@ -52,6 +52,8 @@ def main():
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--n_samples", type=int, default=100, help="Number of samples (uncond)")
     parser.add_argument("--n_midis", type=int, default=None, help="Limit number of MIDI files for infilling")
+    parser.add_argument("--mask_token_start", type=int, default=256, help="Start token index for masking")
+    parser.add_argument("--mask_token_end", type=int, default=512, help="End token index for masking")
     parser.add_argument("--gpu", type=int, default=0)
     args = parser.parse_args()
 
@@ -86,15 +88,14 @@ def main():
         "--model", model_id,
         "--load_dir", args.load_dir,
         "--bars", "64",
-        "--batch_size", str(args.batch_size)
+        "--batch_size", str(args.batch_size),
+        "--tracks", "trio_octuple"
     ]
     
     try:
         H = get_sampler_hparams('sample')
     except Exception as e:
         print(f"Error setting up hparams: {e}")
-        # data/POP909_trio_octuple.npy is physically located in workspace data/
-        # but H params might default to something else.
         raise
     finally:
         sys.argv = prev_argv
@@ -182,9 +183,10 @@ def main():
         
         converter = POP909OctupleTrioConverter(slice_bars=64) # Ensure max length covers needed range
         
-        mask_start_bar = 8
-        mask_end_bar = 16
-        print(f"Masking Bars: {mask_start_bar} - {mask_end_bar}")
+        # Token-based masking
+        mask_token_start = args.mask_token_start
+        mask_token_end = args.mask_token_end
+        print(f"Masking Tokens: {mask_token_start} - {mask_token_end} (Range: {mask_token_end - mask_token_start})")
         
         # Mask ID for Octuple is usually a vector (one per channel)
         if hasattr(sampler, 'mask_id'):
@@ -205,24 +207,26 @@ def main():
                 
                 original_tokens = tensors.outputs[0] # Take first slice
                 
-                # Check length (using Bar index 0)
+                # Check minimum length for structure
                 if original_tokens.ndim != 2 or original_tokens.shape[1] < 8:
                     continue
                 
-                bars = original_tokens[:, 0]
-                max_bar = bars.max() if len(bars) > 0 else 0
-                
-                # Need strictly at least 16 bars (bars 0-15 exist) to infill 8-16
-                if max_bar < 15: 
+                # Truncate to model block size (1024) to avoid "model block size exhausted"
+                if len(original_tokens) > H.NOTES:
+                     original_tokens = original_tokens[:H.NOTES]
+
+                # VALIDATION: Check if sequence is long enough to contain the mask region
+                if len(original_tokens) <= mask_token_end:
+                    # Sequence too short to evaluate this mask range
+                    # print(f"Skipping {midi_path}: length {len(original_tokens)} < mask_end {mask_token_end}")
                     continue
                     
                 # Prepare Masked Input
                 # Copy original
                 masked_input = original_tokens.copy()
                 
-                # Apply mask for bars 8-16
-                mask_indices = (bars >= mask_start_bar) & (bars < mask_end_bar)
-                masked_input[mask_indices] = mask_token_id 
+                # Apply mask to token range
+                masked_input[mask_token_start:mask_token_end] = mask_token_id 
                 
                 # Repeat for batch (2 samples per midi)
                 batch_size = 2
@@ -259,16 +263,12 @@ def main():
         # Calculate Metrics
         if generated_samples:
             print("Calculating infilling metrics...")
-            # steps = bars * 16
-            mask_start_step = mask_start_bar * 16
-            mask_end_step = mask_end_bar * 16
             
             metrics = evaluate_infilling(
                 generated_samples, 
                 original_samples_for_metrics,
-                mask_start_step=mask_start_step,
-                mask_end_step=mask_end_step,
-                is_octuple=True
+                mask_start_step=mask_token_start,
+                mask_end_step=mask_token_end
             )
         else:
             print("No samples generated, skipping metrics.")

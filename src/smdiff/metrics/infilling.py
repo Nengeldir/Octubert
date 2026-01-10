@@ -11,16 +11,15 @@ from .common import (
 )
 
 
-def evaluate_infilling(generated_samples, original_samples, mask_start_step, mask_end_step, is_octuple=True):
+def evaluate_infilling(generated_samples, original_samples, mask_start_step, mask_end_step):
     """
-    Evaluate infilling quality with reconstruction and boundary metrics.
+    Evaluate infilling quality with reconstruction and boundary metrics using token index masking.
     
     Args:
         generated_samples: List of (T, C) generated token arrays
         original_samples: List of (T, C) original ground truth arrays
-        mask_start_step: Start timestep of masked region (OR start step index for grid)
-        mask_end_step: End timestep of masked region (OR end step index for grid)
-        is_octuple: Whether samples are Octuple encoded (uses Bar column for masking)
+        mask_start_step: Start token index of masked region
+        mask_end_step: End token index of masked region
         
     Returns:
         Dictionary of metrics
@@ -28,33 +27,21 @@ def evaluate_infilling(generated_samples, original_samples, mask_start_step, mas
     metrics = {}
     
     # Octuple indices: Bar=0, Pos=1, Prog=2, Pitch=3, Dur=4, Vel=5
+    prog_idx = 2
     pitch_idx = 3
     duration_idx = 4
     velocity_idx = 5
-    bar_idx = 0
-
-    # Extract masked regions
-    # Octuple: mask_start_step is treated as BAR index if is_octuple is True
-    # User script passes 16 * start_bar. We need to handle that carefully.
-    # The caller typically passes raw step count.
-    # Let's assume input is in STEPS (standard interface), but for Octuple check Bars.
-    # Assuming 16 steps per bar (standard in this repo).
-    
-    start_bar = mask_start_step // 16
-    end_bar = mask_end_step // 16
     
     def extract_region(sample):
-        # Column 0 is Bar index
-        if sample.ndim != 2 or sample.shape[1] != 8:
-            return sample # fallback or empty
-        bars = sample[:, 0]
-        mask = (bars >= start_bar) & (bars < end_bar)
+        # Token-based slicing
+        if mask_start_step >= len(sample):
+            return np.zeros((0, sample.shape[1]), dtype=sample.dtype) if sample.ndim > 1 else np.zeros((0,), dtype=sample.dtype)
         
-        # Validation: ensure we have columns
-        if mask.any():
-            return sample[mask]
-        else:
-            return np.zeros((0, 8), dtype=sample.dtype)
+        end = min(mask_end_step, len(sample))
+        if end <= mask_start_step:
+            return np.zeros((0, sample.shape[1]), dtype=sample.dtype) if sample.ndim > 1 else np.zeros((0,), dtype=sample.dtype)
+            
+        return sample[mask_start_step:end]
         
     gen_masked = [extract_region(s) for s in generated_samples]
     orig_masked = [extract_region(s) for s in original_samples]
@@ -104,48 +91,57 @@ def evaluate_infilling(generated_samples, original_samples, mask_start_step, mas
     else:
         metrics['infilled_pch_kl'] = 0.0
     
-    # Note density error (notes/bar)
-    mask_duration_bars = max(1, end_bar - start_bar)
-        
+    # Note count error (Total events difference in masked region)
     def _count_notes(x):
-        return x.shape[0] # Just count events for now as proxy for notes
+        return x.shape[0]
 
-    # Compute density per bar
-    gen_densities = [_count_notes(g) for g in gen_masked]
-    orig_densities = [_count_notes(o) for o in orig_masked]
+    gen_counts = [_count_notes(g) for g in gen_masked]
+    orig_counts = [_count_notes(o) for o in orig_masked]
     
-    # Error: difference in n_notes / mask_duration
-    density_errors = [abs(g - o) / mask_duration_bars 
-                      for g, o in zip(gen_densities, orig_densities)]
-    
-    metrics['infilled_density_error'] = np.mean(density_errors) if density_errors else 0.0
+    count_errors = [abs(g - o) for g, o in zip(gen_counts, orig_counts)]
+    metrics['infilled_count_error'] = np.mean(count_errors) if count_errors else 0.0
     
     # Boundary coherence metrics
-    # simplified: check pitch distance between last pre-mask event and first mask event
+    # Improved: check pitch/duration distance between last pre-mask event and first mask event
     pitch_smoothness = []
+    rhythm_smoothness = []
+    
+    boundary_checks = 0
+    boundary_matches = 0
     
     for gen_full in generated_samples:
-        if gen_full.ndim != 2 or gen_full.shape[1] != 8:
+        if gen_full.ndim != 2:
             continue
             
-        bars = gen_full[:, 0]
-        # Events just before mask start
-        pre_mask = gen_full[bars < start_bar]
-        # Events at mask start
-        at_mask = gen_full[bars == start_bar]
+        at_idx = mask_start_step
         
-        if len(pre_mask) > 0 and len(at_mask) > 0:
-            last_pre = pre_mask[-1]
-            first_at = at_mask[0]
+        if at_idx < len(gen_full) and at_idx > 0:
+            boundary_checks += 1
+            # Instrument at the start of the mask
+            inst_at = gen_full[at_idx, prog_idx]
             
-            p_pre = last_pre[pitch_idx]
-            p_at = first_at[pitch_idx]
+            # Search backwards for the most recent event of the same instrument
+            # Scan from mask_start_step - 1 down to 0
+            pre_idx = -1
+            for i in range(at_idx - 1, -1, -1):
+                if gen_full[i, prog_idx] == inst_at:
+                    pre_idx = i
+                    break
             
-            # Simple absolute pitch difference
-            pitch_smoothness.append(abs(p_pre - p_at))
+            if pre_idx != -1:
+                boundary_matches += 1
+                p_pre = gen_full[pre_idx, pitch_idx]
+                p_at = gen_full[at_idx, pitch_idx]
+                
+                d_pre = gen_full[pre_idx, duration_idx]
+                d_at = gen_full[at_idx, duration_idx]
+                
+                pitch_smoothness.append(abs(p_pre - p_at))
+                rhythm_smoothness.append(abs(d_pre - d_at))
             
     metrics['boundary_pitch_smoothness'] = np.mean(pitch_smoothness) if pitch_smoothness else 0.0
-    metrics['boundary_rhythm_smoothness'] = 0.0 # Placeholder
+    metrics['boundary_rhythm_smoothness'] = np.mean(rhythm_smoothness) if rhythm_smoothness else 0.0
+    metrics['boundary_matches_pct'] = 100.0 * boundary_matches / boundary_checks if boundary_checks > 0 else 0.0
     
     # General quality metrics (full samples)
     if generated_samples:
