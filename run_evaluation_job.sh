@@ -74,7 +74,8 @@ python evaluate_octuple.py \
     --model $MODEL_ID \
     --load_dir $RUN_DIR \
     --input_midi_dir "$INFILL_MIDI_DIR" \
-    --batch_size 4
+    --batch_size 4 \
+    --n_midis 2
 
 echo "Infilling evaluation complete!"
 

@@ -2,7 +2,7 @@
 #SBATCH --job-name=eval_bar_all
 #SBATCH --output=logs/eval_bar_all_%j.out
 #SBATCH --error=logs/eval_bar_all_%j.err
-#SBATCH --time=04:00:00
+#SBATCH --time=08:00:00
 #SBATCH --partition=student
 #SBATCH --account=deep_learning
 #SBATCH --gpus=1
@@ -32,7 +32,7 @@ python3 evaluate_octuple.py \
   --model "${MODEL_ID}" \
   --load_dir "${RUN_DIR}" \
   --n_samples 100 \
-  --batch_size 16
+  --batch_size 4
 
 echo "========================================"
 echo "Infilling evaluation"
@@ -44,6 +44,6 @@ python3 evaluate_octuple.py \
   --model "${MODEL_ID}" \
   --load_dir "${RUN_DIR}" \
   --input_midi_dir "${INFILL_MIDI_DIR}" \
-  --batch_size 16
+  --batch_size 4
 
 echo "Job finished at $(date)"

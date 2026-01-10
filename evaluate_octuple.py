@@ -51,6 +51,7 @@ def main():
     parser.add_argument("--input_midi_dir", type=str, help="Directory of input MIDIs for infill task")
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--n_samples", type=int, default=100, help="Number of samples (uncond)")
+    parser.add_argument("--n_midis", type=int, default=None, help="Limit number of MIDI files for infilling")
     parser.add_argument("--gpu", type=int, default=0)
     args = parser.parse_args()
 
@@ -171,7 +172,13 @@ def main():
                 if f.lower().endswith('.mid') or f.lower().endswith('.midi'):
                     midi_files.append(os.path.join(root, f))
         
-        print(f"Found {len(midi_files)} MIDI files.")
+        # Sort to ensure deterministic order
+        midi_files.sort()
+        
+        if args.n_midis is not None:
+            midi_files = midi_files[:args.n_midis]
+            
+        print(f"Found {len(midi_files)} MIDI files (limit: {args.n_midis}).")
         
         converter = POP909OctupleTrioConverter(slice_bars=64) # Ensure max length covers needed range
         
@@ -239,7 +246,7 @@ def main():
                 # Save immediately to avoid memory issues? Or valid list
                 # Just save individual batch here (convenience)
                 mid_name = os.path.splitext(os.path.basename(midi_path))[0]
-                save_generated_samples(samples, "octuple", samples_dir, prefix=f"infill_{mid_name}")
+                save_generated_samples(samples, "trio_octuple", samples_dir, prefix=f"infill_{mid_name}")
                 
                 count += 1
                 
