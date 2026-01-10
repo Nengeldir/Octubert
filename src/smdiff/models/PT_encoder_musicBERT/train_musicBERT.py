@@ -104,8 +104,9 @@ scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 criterion = nn.CrossEntropyLoss(ignore_index=0) # Ignore PAD token (0)
 
 # Ensure checkpoints directory exists
-os.makedirs('../checkpoints', exist_ok=True)
-CHECKPOINT_PATH = '../checkpoints/musicbert_latest.pth'
+# /home/lziltener/symbolic-music-discrete-diffusion-fork/logs/train_33886.err
+os.makedirs('logs/checkpoints', exist_ok=True)
+CHECKPOINT_PATH = 'logs/checkpoints/musicbert_latest.pth'
 
 if 'train_loader' in locals():
     # Calculate epochs
