@@ -27,7 +27,7 @@ echo "Run dir: ${RUN_DIR}"
 echo "Strategy: bar_attribute"
 echo "========================================"
 
-python3 evaluate_octuple.py \
+python3 -m smdiff.cli.evaluate_octuple \
   --task uncond \
   --model "${MODEL_ID}" \
   --load_dir "${RUN_DIR}" \
@@ -39,7 +39,7 @@ echo "Infilling evaluation"
 echo "MIDI dir: ${INFILL_MIDI_DIR}"
 echo "========================================"
 
-python3 evaluate_octuple.py \
+python3 -m smdiff.cli.evaluate_octuple \
   --task infill \
   --model "${MODEL_ID}" \
   --load_dir "${RUN_DIR}" \
