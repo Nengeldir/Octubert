@@ -7,7 +7,8 @@ import sys
 from tqdm import tqdm
 
 # Ensure repository root is on sys.path
-_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+# Script is at root of repo
+_REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
@@ -152,7 +153,7 @@ def main():
         
         # Save Samples to MIDI
         print("Saving samples...")
-        save_generated_samples(np.array(generated_samples), "octuple", samples_dir, prefix="uncond")
+        save_generated_samples(np.array(generated_samples), "trio_octuple", samples_dir, prefix="uncond")
         
         # Calculate Metrics
         print("Calculating metrics...")
@@ -164,8 +165,11 @@ def main():
             
         print(f"Infilling from MIDIs in {args.input_midi_dir}...")
         
-        midi_files = [os.path.join(args.input_midi_dir, f) for f in os.listdir(args.input_midi_dir) 
-                      if f.endswith('.mid') or f.endswith('.midi')]
+        midi_files = []
+        for root, dirs, files in os.walk(args.input_midi_dir):
+            for f in files:
+                if f.lower().endswith('.mid') or f.lower().endswith('.midi'):
+                    midi_files.append(os.path.join(root, f))
         
         print(f"Found {len(midi_files)} MIDI files.")
         
