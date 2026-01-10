@@ -57,7 +57,7 @@ python evaluate_octuple.py \
     --model $MODEL_ID \
     --load_dir $RUN_DIR \
     --n_samples $N_SAMPLES_UNCOND \
-    --batch_size 16
+    --batch_size 8
 
 echo "Unconditional evaluation complete!"
 
