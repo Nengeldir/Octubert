@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=eval_oct_ddpm_trio
-#SBATCH --output=logs/eval_oct_ddpm_trio_%j.out
-#SBATCH --error=logs/eval_oct_ddpm_trio_%j.err
+#SBATCH --job-name=eval_mixed
+#SBATCH --output=logs/eval_mixed_%j.out
+#SBATCH --error=logs/eval_mixed_%j.err
 #SBATCH --time=04:00:00
 #SBATCH --partition=student
 #SBATCH --account=deep_learning
@@ -16,28 +16,15 @@ export PYTHONPATH="$PWD/src:${PYTHONPATH:-}"
 mkdir -p logs
 nvidia-smi || true
 
-MODEL_ID="octuple_ddpm"
-RUN_DIR="runs/octuple_ddpm_trio_octuple"
-DATASET_ID="pop909_trio_octuple"
-
-# Infilling: 50 MIDI files × 2 regions = 100 samples
-INFILL_MIDI_DIR="data/POP909/test"
-N_MIDIS=50
-SAMPLES_PER_MIDI=1
-
-# Region 1 (bars)
-MASK1_START=16
-MASK1_END=32
-
-# Region 2 (bars)
-MASK2_START=32
-MASK2_END=48
+MODEL_ID="octuple_mask_ddpm"
+RUN_DIR="runs/octuple_mask_ddpm_trio_octuple_mixed"
+INFILL_MIDI_DIR="data/test/POP909"
 
 echo "========================================"
 echo "Unconditional evaluation"
 echo "Model:   ${MODEL_ID}"
 echo "Run dir: ${RUN_DIR}"
-echo "Dataset: ${DATASET_ID}"
+echo "Strategy: mixed"
 echo "========================================"
 
 python3 evaluate_octuple.py \

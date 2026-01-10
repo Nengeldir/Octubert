@@ -1,0 +1,274 @@
+import argparse
+import os
+import json
+import numpy as np
+import torch
+import sys
+from tqdm import tqdm
+
+# Ensure repository root is on sys.path
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from hparams.set_up_hparams import get_sampler_hparams
+from smdiff.utils.sampler_utils import get_sampler, save_generated_samples, ns_to_np
+from smdiff.utils.log_utils import load_model
+from smdiff.metrics.unconditional import evaluate_unconditional
+from smdiff.metrics.infilling import evaluate_infilling
+from smdiff.preprocessing.data import POP909OctupleTrioConverter
+from note_seq import midi_file_to_note_sequence
+
+def load_octuple_dataset(path):
+    print(f"Loading dataset from {path}...")
+    try:
+        data = np.load(path, allow_pickle=True)
+        # Convert to list of arrays if it's an object array
+        if data.dtype == object:
+            return [x for x in data]
+        return data
+    except Exception as e:
+        print(f"Error loading dataset: {e}")
+        return []
+
+def resolve_model_path(load_dir, model_arg, h_model_id):
+    """Helper to determine model ID/path"""
+    # If model arg is provided, use it
+    if model_arg:
+        return model_arg
+    # If not, try to use the H params model_id
+    if h_model_id:
+        return h_model_id
+    # If neither, infer from load_dir name (fragile but possible)
+    return os.path.basename(os.path.normpath(load_dir))
+
+def main():
+    parser = argparse.ArgumentParser(description="Evaluate Octuple Models")
+    parser.add_argument("--load_dir", type=str, required=True, help="Directory containing checkpoints")
+    parser.add_argument("--task", type=str, required=True, choices=["uncond", "infill"], help="Task to evaluate")
+    parser.add_argument("--model", type=str, default=None, help="Model ID (e.g. musicbert_ddpm_trio_octuple)")
+    parser.add_argument("--input_midi_dir", type=str, help="Directory of input MIDIs for infill task")
+    parser.add_argument("--batch_size", type=int, default=16)
+    parser.add_argument("--n_samples", type=int, default=100, help="Number of samples (uncond)")
+    parser.add_argument("--gpu", type=int, default=0)
+    args = parser.parse_args()
+
+    device = torch.device(f"cuda:{args.gpu}" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+
+    # 1. Setup Hparams and Model
+    # Note: We need H to build the model structure
+    # We attempt to use the args.model if provided, else we look for clues.
+    # The existing code uses `get_sampler_hparams(model_id)`. 
+    
+    # Mocking sys.argv to trick get_sampler_hparams if needed, 
+    # but cleaner to just pass model_id if H functions support it.
+    # get_sampler_hparams('sample') reads from sys.argv.
+    
+    model_id = args.model
+    if not model_id:
+        # Try to infer from load_dir path if it contains standard model names
+        # Default fallback
+        print("Warning: --model not specified. Assuming 'musicbert_ddpm_trio_octuple' or inferring from directory.")
+        # This is risky, but let's check if user provided valid load_dir
+        model_id = "musicbert_ddpm_trio_octuple" # Sane default for this repo context
+
+    print(f"Using Model ID: {model_id}")
+
+    # Set up H
+    # We need to construct argv for get_sampler_hparams to work correctly 
+    # as it parses command line args internally
+    prev_argv = sys.argv
+    sys.argv = [
+        sys.argv[0],
+        "--model", model_id,
+        "--load_dir", args.load_dir,
+        "--bars", "64",
+        "--batch_size", str(args.batch_size)
+    ]
+    
+    try:
+        H = get_sampler_hparams('sample')
+    except Exception as e:
+        print(f"Error setting up hparams: {e}")
+        # data/POP909_trio_octuple.npy is physically located in workspace data/
+        # but H params might default to something else.
+        raise
+    finally:
+        sys.argv = prev_argv
+
+    # Override H params from args/context if needed
+    H.load_dir = args.load_dir 
+    # Ensure Octuple masking strategy if relevant (usually loaded from H)
+    
+    # 2. Load Model
+    print("Loading model...")
+    sampler = get_sampler(H).to(device)
+    
+    # Load weights (EMA default)
+    try:
+        # load_model(sampler, "ema", 0, args.load_dir) 
+        # Note: 0 usually means "best" or implicitly handled if load_step is 0
+        load_model(sampler, "ema", 0, args.load_dir, strict=False) 
+    except Exception as e:
+        print(f"Failed to load EMA, trying standard model: {e}")
+        load_model(sampler, "model", 0, args.load_dir, strict=False)
+
+    sampler.eval()
+    
+    # 3. Prepare Output Directories
+    subfolder = "uncond" if args.task == "uncond" else "infill"
+    metrics_dir = os.path.join(args.load_dir, "metrics")
+    samples_dir = os.path.join(metrics_dir, subfolder)
+    os.makedirs(samples_dir, exist_ok=True)
+    
+    # 4. Load Ground Truth Data (for metrics)
+    train_data_path = os.path.join(_REPO_ROOT, "data", "POP909_trio_octuple.npy")
+    train_samples = load_octuple_dataset(train_data_path)
+    
+    generated_samples = []
+    original_samples_for_metrics = [] # Corresponding GT for infilling
+    
+    # 5. Execute Task
+    if args.task == "uncond":
+        print(f"Generating {args.n_samples} unconditional samples...")
+        
+        n_batches = int(np.ceil(args.n_samples / args.batch_size))
+        all_samples = []
+        
+        for _ in tqdm(range(n_batches), desc="Sampling"):
+            curr_batch = min(args.batch_size, args.n_samples - len(all_samples))
+            if curr_batch <= 0: break
+            
+            # Unconditional sampling: pass x_T=None (will be all MASK)
+            # Sample returns (B, T, 8) tensor or numpy
+            samples = sampler.sample(sample_steps=H.sample_steps, B=curr_batch)
+            if isinstance(samples, torch.Tensor):
+                samples = samples.cpu().numpy()
+            
+            all_samples.extend([s for s in samples])
+            
+        generated_samples = all_samples[:args.n_samples]
+        
+        # Save Samples to MIDI
+        print("Saving samples...")
+        save_generated_samples(np.array(generated_samples), "octuple", samples_dir, prefix="uncond")
+        
+        # Calculate Metrics
+        print("Calculating metrics...")
+        metrics = evaluate_unconditional(generated_samples, train_samples, is_octuple=True)
+        
+    elif args.task == "infill":
+        if not args.input_midi_dir:
+            raise ValueError("--input_midi_dir required for infilling")
+            
+        print(f"Infilling from MIDIs in {args.input_midi_dir}...")
+        
+        midi_files = [os.path.join(args.input_midi_dir, f) for f in os.listdir(args.input_midi_dir) 
+                      if f.endswith('.mid') or f.endswith('.midi')]
+        
+        print(f"Found {len(midi_files)} MIDI files.")
+        
+        converter = POP909OctupleTrioConverter(slice_bars=64) # Ensure max length covers needed range
+        
+        mask_start_bar = 8
+        mask_end_bar = 16
+        print(f"Masking Bars: {mask_start_bar} - {mask_end_bar}")
+        
+        # Mask ID for Octuple is usually a vector (one per channel)
+        if hasattr(sampler, 'mask_id'):
+            mask_id = sampler.mask_id
+            if isinstance(mask_id, torch.Tensor):
+                mask_id = mask_id.cpu().numpy()
+            mask_token_id = mask_id
+        else:
+            mask_token_id = H.codebook_size
+
+        count = 0
+        for midi_path in tqdm(midi_files, desc="Infilling"):
+            try:
+                ns = midi_file_to_note_sequence(midi_path)
+                tensors = converter.to_tensors(ns)
+                if not tensors.outputs:
+                    continue
+                
+                original_tokens = tensors.outputs[0] # Take first slice
+                
+                # Check length (using Bar index 0)
+                if original_tokens.ndim != 2 or original_tokens.shape[1] < 8:
+                    continue
+                
+                bars = original_tokens[:, 0]
+                max_bar = bars.max() if len(bars) > 0 else 0
+                
+                # Need strictly at least 16 bars (bars 0-15 exist) to infill 8-16
+                if max_bar < 15: 
+                    continue
+                    
+                # Prepare Masked Input
+                # Copy original
+                masked_input = original_tokens.copy()
+                
+                # Apply mask for bars 8-16
+                mask_indices = (bars >= mask_start_bar) & (bars < mask_end_bar)
+                masked_input[mask_indices] = mask_token_id 
+                
+                # Repeat for batch (2 samples per midi)
+                batch_size = 2
+                x_T = np.tile(masked_input[np.newaxis, :, :], (batch_size, 1, 1))
+                x_T_torch = torch.tensor(x_T, dtype=torch.long).to(device)
+                
+                # Sample
+                # Note: AbsorbingDiffusion sample typically respects non-mask tokens in x_T
+                # if the scheduler/logic supports it. 
+                # Assuming standard smdiff implementation:
+                # pass x_T to sample.
+                
+                samples = sampler.sample(sample_steps=H.sample_steps, x_T=x_T_torch, B=batch_size)
+                if isinstance(samples, torch.Tensor):
+                    samples = samples.cpu().numpy()
+                
+                # Store
+                generated_samples.extend([s for s in samples])
+                original_samples_for_metrics.extend([original_tokens] * batch_size)
+                
+                # Save immediately to avoid memory issues? Or valid list
+                # Just save individual batch here (convenience)
+                mid_name = os.path.splitext(os.path.basename(midi_path))[0]
+                save_generated_samples(samples, "octuple", samples_dir, prefix=f"infill_{mid_name}")
+                
+                count += 1
+                
+            except Exception as e:
+                print(f"Skipping {midi_path}: {e}")
+                continue
+        
+        print(f"Generated {len(generated_samples)} samples from {count} files.")
+        
+        # Calculate Metrics
+        if generated_samples:
+            print("Calculating infilling metrics...")
+            # steps = bars * 16
+            mask_start_step = mask_start_bar * 16
+            mask_end_step = mask_end_bar * 16
+            
+            metrics = evaluate_infilling(
+                generated_samples, 
+                original_samples_for_metrics,
+                mask_start_step=mask_start_step,
+                mask_end_step=mask_end_step,
+                is_octuple=True
+            )
+        else:
+            print("No samples generated, skipping metrics.")
+            metrics = {}
+
+    # Save Metrics
+    metrics_path = os.path.join(metrics_dir, f"metrics_{args.task}.json")
+    with open(metrics_path, 'w') as f:
+        json.dump(metrics, f, indent=2)
+    print(f"Metrics saved to {metrics_path}")
+    print("Done.")
+
+if __name__ == "__main__":
+    main()

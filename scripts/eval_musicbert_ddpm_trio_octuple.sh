@@ -40,40 +40,23 @@ echo "Run dir: ${RUN_DIR}"
 echo "Dataset: ${DATASET_ID}"
 echo "========================================"
 
-python3 -m smdiff.cli.evaluate \
+python3 evaluate_octuple.py \
   --task uncond \
   --model "${MODEL_ID}" \
   --load_dir "${RUN_DIR}" \
-  --dataset_id "${DATASET_ID}" \
   --n_samples 100 \
-  --sample_steps 100 \
-  --batch_size 4 \
-  --ema \
-  --device cuda
+  --batch_size 4
 
 echo "========================================"
-echo "Infilling evaluation (two regions, sequential per MIDI)"
+echo "Infilling evaluation"
 echo "MIDI dir: ${INFILL_MIDI_DIR}"
-echo "N MIDIs:  ${N_MIDIS}"
-echo "Regions:  [${MASK1_START},${MASK1_END}) and [${MASK2_START},${MASK2_END})"
 echo "========================================"
 
-python3 -m smdiff.cli.evaluate \
+python3 evaluate_octuple.py \
   --task infill \
   --model "${MODEL_ID}" \
   --load_dir "${RUN_DIR}" \
-  --dataset_id "${DATASET_ID}" \
   --input_midi_dir "${INFILL_MIDI_DIR}" \
-  --n_midis "${N_MIDIS}" \
-  --samples_per_midi "${SAMPLES_PER_MIDI}" \
-  --mask_start_bar "${MASK1_START}" \
-  --mask_end_bar "${MASK1_END}" \
-  --mask2_start_bar "${MASK2_START}" \
-  --mask2_end_bar "${MASK2_END}" \
-  --n_samples 100 \
-  --sample_steps 100 \
-  --batch_size 4 \
-  --ema \
-  --device cuda
+  --batch_size 4
 
 echo "Job finished at $(date)"
