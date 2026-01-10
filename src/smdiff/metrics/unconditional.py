@@ -73,22 +73,18 @@ def evaluate_unconditional(generated_samples, train_samples, is_octuple=True):
     # Musical coherence metrics (per-sample averages)
     self_sims = []
     pitch_ranges = []
-    polyphonies = []
     
     for sample in generated_samples:
         if len(sample) == 0:
             continue
         self_sims.append(compute_self_similarity(sample, pitch_idx=pitch_idx, duration_idx=duration_idx))
         pitch_ranges.append(compute_pitch_range(sample, pitch_idx=pitch_idx))
-        polyphonies.append(_compute_polyphony(sample, pitch_idx=pitch_idx))
     
     metrics['self_similarity'] = np.mean(self_sims) if self_sims else 0.0
     metrics['self_similarity_std'] = np.std(self_sims) if self_sims else 0.0
     
     metrics['pitch_range_mean'] = np.mean(pitch_ranges) if pitch_ranges else 0.0
     metrics['pitch_range_std'] = np.std(pitch_ranges) if pitch_ranges else 0.0
-    
-    metrics['avg_polyphony'] = np.mean(polyphonies) if polyphonies else 0.0
     
     # Diversity metric
     metrics['sample_diversity'] = compute_sample_diversity(generated_samples, 
@@ -102,16 +98,3 @@ def evaluate_unconditional(generated_samples, train_samples, is_octuple=True):
     metrics['valid_samples_pct'] = 100.0 * valid_count / len(generated_samples) if len(generated_samples) > 0 else 0.0
     
     return metrics
-
-
-def _compute_polyphony(tokens, pitch_idx=3):
-    """
-    Estimate polyphony (average simultaneous notes).
-    For octuple encoding:
-    Count number of distinct positions active? Or just average notes per bar?
-    Simple proxy: Since Octuple is linear event list, polyphony is strictly not defined by shape.
-    But we can estimate by checking number of note-on events per unit time (or bar).
-    Actually, just return 0 for now as it requires complex parsing of (Bar, Pos, Dur).
-    """
-    return 0.0
-

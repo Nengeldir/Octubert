@@ -6,11 +6,15 @@ import torch
 import sys
 from tqdm import tqdm
 
-# Ensure repository root is on sys.path
-# Script is at root of repo
-_REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
+# Ensure repository root is on sys.path so top-level packages like 'hparams' resolve
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
+
+# Also ensure 'src' is on sys.path so 'smdiff' package resolves when running by path
+_SRC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if _SRC_DIR not in sys.path:
+    sys.path.insert(0, _SRC_DIR)
 
 from hparams.set_up_hparams import get_sampler_hparams
 from smdiff.utils.sampler_utils import get_sampler, save_generated_samples, ns_to_np
@@ -47,36 +51,19 @@ def main():
     parser = argparse.ArgumentParser(description="Evaluate Octuple Models")
     parser.add_argument("--load_dir", type=str, required=True, help="Directory containing checkpoints")
     parser.add_argument("--task", type=str, required=True, choices=["uncond", "infill"], help="Task to evaluate")
-    parser.add_argument("--model", type=str, default=None, help="Model ID (e.g. musicbert_ddpm_trio_octuple)")
+    parser.add_argument("--model", type=str, required=True, default=None, help="Model ID (e.g. musicbert_ddpm_trio_octuple)")
     parser.add_argument("--input_midi_dir", type=str, help="Directory of input MIDIs for infill task")
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--n_samples", type=int, default=100, help="Number of samples (uncond)")
     parser.add_argument("--n_midis", type=int, default=None, help="Limit number of MIDI files for infilling")
     parser.add_argument("--mask_token_start", type=int, default=256, help="Start token index for masking")
     parser.add_argument("--mask_token_end", type=int, default=512, help="End token index for masking")
-    parser.add_argument("--gpu", type=int, default=0)
     args = parser.parse_args()
 
-    device = torch.device(f"cuda:{args.gpu}" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # 1. Setup Hparams and Model
-    # Note: We need H to build the model structure
-    # We attempt to use the args.model if provided, else we look for clues.
-    # The existing code uses `get_sampler_hparams(model_id)`. 
-    
-    # Mocking sys.argv to trick get_sampler_hparams if needed, 
-    # but cleaner to just pass model_id if H functions support it.
-    # get_sampler_hparams('sample') reads from sys.argv.
-    
     model_id = args.model
-    if not model_id:
-        # Try to infer from load_dir path if it contains standard model names
-        # Default fallback
-        print("Warning: --model not specified. Assuming 'musicbert_ddpm_trio_octuple' or inferring from directory.")
-        # This is risky, but let's check if user provided valid load_dir
-        model_id = "musicbert_ddpm_trio_octuple" # Sane default for this repo context
-
     print(f"Using Model ID: {model_id}")
 
     # Set up H
@@ -126,7 +113,7 @@ def main():
     os.makedirs(samples_dir, exist_ok=True)
     
     # 4. Load Ground Truth Data (for metrics)
-    train_data_path = os.path.join("data", "POP909_trio_octuple.npy")
+    train_data_path = os.path.join(_REPO_ROOT, "data", "POP909_trio_octuple.npy")
     train_samples = load_octuple_dataset(train_data_path)
     
     generated_samples = []
@@ -203,6 +190,7 @@ def main():
                 ns = midi_file_to_note_sequence(midi_path)
                 tensors = converter.to_tensors(ns)
                 if not tensors.outputs:
+                    print("Error converting to npy during conversion to octuple format")
                     continue
                 
                 original_tokens = tensors.outputs[0] # Take first slice
@@ -218,7 +206,7 @@ def main():
                 # VALIDATION: Check if sequence is long enough to contain the mask region
                 if len(original_tokens) <= mask_token_end:
                     # Sequence too short to evaluate this mask range
-                    # print(f"Skipping {midi_path}: length {len(original_tokens)} < mask_end {mask_token_end}")
+                    print(f"Skipping {midi_path}: length {len(original_tokens)} < mask_end {mask_token_end}")
                     continue
                     
                 # Prepare Masked Input
