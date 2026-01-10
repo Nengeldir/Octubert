@@ -124,6 +124,10 @@ def main():
 
     ns = parser.parse_args()
 
+    # Ensure masking_strategy is available for pick() mechanism, mapping from --strategy
+    if ns.strategy and not hasattr(ns, 'masking_strategy'):
+        ns.masking_strategy = ns.strategy
+
     # Load and merge config
     cfg = load_config(ns.model, ns.config, ns.set)
     if ns.dataset_id:
