@@ -123,7 +123,7 @@ def main():
     os.makedirs(samples_dir, exist_ok=True)
     
     # 4. Load Ground Truth Data (for metrics)
-    train_data_path = os.path.join(_REPO_ROOT, "data", "POP909_trio_octuple.npy")
+    train_data_path = os.path.join("data", "POP909_trio_octuple.npy")
     train_samples = load_octuple_dataset(train_data_path)
     
     generated_samples = []
