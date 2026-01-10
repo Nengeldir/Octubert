@@ -56,6 +56,7 @@ def main():
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--n_samples", type=int, default=100, help="Number of samples (uncond)")
     parser.add_argument("--n_midis", type=int, default=None, help="Limit number of MIDI files for infilling")
+    parser.add_argument("--load_step", type=int, default=0, help="Checkpoint step to load (0 for best/latest)")
     parser.add_argument("--mask_token_start", type=int, default=256, help="Start token index for masking")
     parser.add_argument("--mask_token_end", type=int, default=512, help="End token index for masking")
     args = parser.parse_args()
@@ -99,10 +100,10 @@ def main():
     try:
         # load_model(sampler, "ema", 0, args.load_dir) 
         # Note: 0 usually means "best" or implicitly handled if load_step is 0
-        load_model(sampler, "ema", 0, args.load_dir, strict=False) 
+        load_model(sampler, "ema", args.load_step, args.load_dir, strict=False) 
     except Exception as e:
         print(f"Failed to load EMA, trying standard model: {e}")
-        load_model(sampler, "model", 0, args.load_dir, strict=False)
+        load_model(sampler, "model", args.load_step, args.load_dir, strict=False)
 
     sampler.eval()
     
