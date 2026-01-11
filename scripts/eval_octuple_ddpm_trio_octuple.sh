@@ -20,7 +20,7 @@ MODEL_ID="octuple_ddpm"
 RUN_DIR="runs/octuple_ddpm_trio_octuple"
 
 # Infilling: 50 MIDI files × 2 regions = 100 samples
-INFILL_MIDI_DIR="data/POP909/test"
+INFILL_MIDI_DIR="data/test/POP909"
 
 echo "========================================"
 echo "Unconditional evaluation"

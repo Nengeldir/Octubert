@@ -20,7 +20,7 @@ MODEL_ID="schmu_tx_vae"
 RUN_DIR="runs/schmu_tx_vae_melody"
 
 # Infilling: 50 MIDI files × 2 regions = 100 samples
-INFILL_MIDI_DIR="data/POP909/test"
+INFILL_MIDI_DIR="data/test/POP909"
 
 echo "========================================"
 echo "Unconditional evaluation"
