@@ -26,7 +26,6 @@ echo "========================================"
 echo "Unconditional evaluation"
 echo "Model:   ${MODEL_ID}"
 echo "Run dir: ${RUN_DIR}"
-echo "Dataset: ${DATASET_ID}"
 echo "========================================"
 
 python3 -m smdiff.cli.evaluate_octuple \
